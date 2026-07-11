@@ -22,8 +22,14 @@ because the maintainer's OAuth token lacks `workflow` scope. To turn it on:
 
 ## Working rules
 
-- **Never launch the Electron app** (`npm start`) — the owner runs it and
-  sends screenshots. Verify headlessly instead:
+- **Never launch the Electron app** (`npm start`) unless the owner asks —
+  he runs it and sends screenshots. Verify headlessly instead:
+  - **UI/CSS can be inspected without Electron**: serve the repo
+    (`python3 -m http.server`) and open `renderer/dev-harness.html` in a
+    browser — it stubs `window.clara` and can rehydrate any session state
+    via `sessionStorage.setItem("harness", JSON.stringify(state))`. This is
+    how the .empty class-collision bug was found; prefer it over guessing.
+    Never commit real session data (personal) used for reproduction.
   - `node --check` every file you touch (main is ESM, preload is CJS,
     renderer files are classic scripts — no modules).
   - `scripts/smoke-*.mjs` are real end-to-end tests but **spend the owner's

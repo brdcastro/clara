@@ -494,7 +494,7 @@ async function refreshGroupSummary(group) {
 
 function renderEmptyState(conv) {
   const empty = document.createElement("div");
-  empty.className = "empty";
+  empty.className = "empty-state";
   const h1 = document.createElement("h1");
   h1.textContent = "O que vamos descobrir?";
   const chips = document.createElement("div");
@@ -585,7 +585,7 @@ function scrollToBottom(conv) {
 
 // DOM-only builders (used both live and during rehydration).
 function renderUserBubble(conv, text) {
-  conv.innerEl.querySelector(".empty")?.remove();
+  conv.innerEl.querySelector(".empty-state")?.remove();
   const el = document.createElement("div");
   el.className = "msg-user";
   el.textContent = text;
@@ -595,7 +595,7 @@ function renderUserBubble(conv, text) {
 }
 
 function renderAiBubble(conv, html) {
-  conv.innerEl.querySelector(".empty")?.remove();
+  conv.innerEl.querySelector(".empty-state")?.remove();
   const card = document.createElement("div");
   card.className = "card-ai";
   const iframe = document.createElement("iframe");
@@ -686,7 +686,7 @@ function syncTab(conv, tab) {
 }
 
 function createTab(conv, url, { restore = null } = {}) {
-  conv.innerEl.querySelector(".empty")?.remove();
+  conv.innerEl.querySelector(".empty-state")?.remove();
 
   const tabId = restore?.tabId ?? `tab-${nextTabId++}`;
   const webview = document.createElement("webview");
@@ -962,7 +962,7 @@ window.clara.onToolRequest("group-tabs", ({ requestId, conversationId, name, tab
     tab.ownerConv = target;
     target.tabs.set(tab.tabId, tab);
     target.activeTabId = tab.tabId;
-    target.innerEl.querySelector(".empty")?.remove();
+    target.innerEl.querySelector(".empty-state")?.remove();
     window.clara.tabUpdated(target.id, { tabId: tab.tabId, url: tab.url, title: tab.title });
     group.convIds.push(target.id);
     items.push({ tabId: tab.tabId, conversationId: target.id, title: tab.title, url: tab.url });
@@ -1163,10 +1163,27 @@ function sendMessage(text) {
   collapseOverlay(conv);
   setRunning(conv, true);
   setStatus(conv, "pensando…");
-  window.clara.send(conv.id, trimmed);
+  window.clara.send(conv.id, trimmed, browserContext(conv));
 
   inputEl.value = "";
   autosize();
+}
+
+// Ambient state sent with every message so "esta página" resolves without
+// the model having to guess or call list_tabs first.
+function browserContext(conv) {
+  if (!conv.tabs.size) return null;
+  const active = conv.tabs.get(conv.activeTabId);
+  return {
+    activeTab: active
+      ? { tabId: active.tabId, title: active.title, url: active.url }
+      : null,
+    tabs: [...conv.tabs.values()].map((t) => ({
+      tabId: t.tabId,
+      title: t.title,
+      url: t.url,
+    })),
+  };
 }
 
 sendBtn.onclick = () => {

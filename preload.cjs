@@ -1,8 +1,8 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("clara", {
-  send: (conversationId, text) =>
-    ipcRenderer.invoke("clara:send", { conversationId, text }),
+  send: (conversationId, text, context) =>
+    ipcRenderer.invoke("clara:send", { conversationId, text, context }),
   abort: (conversationId) => ipcRenderer.send("clara:abort", { conversationId }),
   warmup: (conversationId) => ipcRenderer.send("clara:warmup", { conversationId }),
   onEvent: (fn) => {

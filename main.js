@@ -123,6 +123,27 @@ app.on("web-contents-created", (_event, contents) => {
   });
 });
 
+// Prefixes the user's message with the live browser state so references like
+// "esta página" resolve without a list_tabs round-trip.
+function withBrowserContext(text, context) {
+  if (!context?.tabs?.length) return text;
+  const lines = ["[Browser context — injected by the app, not written by the user."];
+  if (context.activeTab) {
+    lines.push(
+      `Active tab (${context.activeTab.tabId}): "${context.activeTab.title}" <${context.activeTab.url}>`
+    );
+  }
+  const others = context.tabs.filter((t) => t.tabId !== context.activeTab?.tabId);
+  if (others.length) {
+    lines.push(
+      "Other tabs: " +
+        others.map((t) => `(${t.tabId}) "${t.title}" <${t.url}>`).join("; ")
+    );
+  }
+  lines.push("]");
+  return `${lines.join("\n")}\n\n${text}`;
+}
+
 // Unique path in ~/Downloads: "file.pdf" -> "file (1).pdf" when taken.
 function uniqueDownloadPath(filename) {
   const dir = app.getPath("downloads");
@@ -157,8 +178,8 @@ app.whenReady().then(async () => {
     agent.summarize(prompt)
   );
 
-  ipcMain.handle("clara:send", (_event, { conversationId, text }) =>
-    agent.send(conversationId, text, (event) => {
+  ipcMain.handle("clara:send", (_event, { conversationId, text, context }) =>
+    agent.send(conversationId, withBrowserContext(text, context), (event) => {
       win?.webContents.send("clara:event", { conversationId, event });
     })
   );

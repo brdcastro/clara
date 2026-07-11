@@ -1,0 +1,88 @@
+<!doctype html>
+<!-- Dev harness: renders the Clara UI in a plain browser with window.clara
+     stubbed, so layout/CSS can be inspected without Electron. Webviews are
+     inert unknown elements here. Not loaded by the app. -->
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Clara (dev harness)</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="drag-strip"></div>
+
+    <aside id="sidebar">
+      <div class="brand">Clara</div>
+      <div id="sidebar-actions">
+        <button id="new-conv" title="Nova aba">
+          <span class="plus">+</span> Nova aba
+        </button>
+        <button id="new-group" title="Novo grupo">❐</button>
+      </div>
+      <nav id="item-list"></nav>
+      <footer id="sidebar-foot">gpt-5.6-sol · low</footer>
+    </aside>
+
+    <main id="main">
+      <div id="stage" hidden>
+        <div class="site-head">
+          <img class="site-favicon" alt="" />
+          <span class="site-title"></span>
+          <span class="site-domain"></span>
+          <span class="site-actions">
+            <button class="site-btn" data-act="back" title="Voltar">&#8592;</button>
+            <button class="site-btn" data-act="fwd" title="Avançar">&#8594;</button>
+            <button class="site-btn" data-act="reload" title="Recarregar">&#8635;</button>
+            <button class="site-btn" data-act="close" title="Fechar aba">&#10005;</button>
+          </span>
+        </div>
+        <div id="stage-views"></div>
+        <div id="group-home" hidden>
+          <div class="home-inner">
+            <h1 class="home-title"></h1>
+            <div class="home-summary"></div>
+            <div class="home-grid"></div>
+          </div>
+        </div>
+      </div>
+      <div id="feeds"></div>
+      <div id="composer-wrap">
+        <div id="context-chips" hidden></div>
+        <div id="composer">
+          <textarea id="input" rows="1" placeholder="Pergunte qualquer coisa ou digite uma URL…" spellcheck="false"></textarea>
+          <button id="send" title="Enviar">
+            <svg class="icon-send" viewBox="0 0 16 16" width="14" height="14"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="icon-stop"></span>
+          </button>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script>
+    // Stub of the preload bridge. Harness state can predefine a session via
+    // window.__harnessSession before app.js boots.
+    window.clara = {
+      send: async () => {},
+      abort() {},
+      warmup() {},
+      onEvent() {},
+      onToolRequest() {},
+      reply() {},
+      tabUpdated() {},
+      tabClosed() {},
+      pageCaptured() {},
+      onPopup() {},
+      onDownloadDone() {},
+      summarize: async () => "Resumo de teste.",
+      loadSession: async () =>
+        JSON.parse(sessionStorage.getItem("harness") ?? "null"),
+      saveSession() {},
+      registerResume() {},
+    };
+  </script>
+  <script src="page-scripts.js"></script>
+  <script src="session.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
