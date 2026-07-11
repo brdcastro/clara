@@ -4,9 +4,11 @@ import { fileURLToPath } from "node:url";
 import { AgentService } from "./agent/agent.js";
 import { startMcpServer } from "./agent/mcp-server.js";
 import { createHistory } from "./agent/history.js";
+import { createStore } from "./agent/store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const history = createHistory(path.join(__dirname, "agent-home"));
+const store = createStore(app.getPath("userData"));
 
 let win = null;
 let agent = null;
@@ -110,6 +112,22 @@ app.whenReady().then(async () => {
 
   ipcMain.on("clara:warmup", (_event, { conversationId }) => {
     agent.warmup(conversationId);
+  });
+
+  // Session persistence: the renderer rehydrates from this on boot, then
+  // pushes snapshots as state changes. Thread ids are merged in from the
+  // agent (authoritative) so conversations resume the right Codex thread.
+  ipcMain.handle("clara:load-session", () => store.load());
+
+  ipcMain.on("clara:register-resume", (_event, { conversationId, threadId }) => {
+    agent.registerResume(conversationId, threadId);
+  });
+
+  ipcMain.on("clara:save-session", (_event, state) => {
+    for (const conv of state.conversations ?? []) {
+      conv.threadId = agent.threadId(conv.id) ?? conv.threadId ?? null;
+    }
+    store.save(state);
   });
 
   ipcMain.on("clara:tab-updated", (_event, { conversationId, tab }) => {

@@ -11,7 +11,9 @@ Runs on the user's **ChatGPT subscription** via the Codex SDK — no API key.
 ```bash
 npm install
 npm start          # Electron app
-npm run smoke      # agent-only smoke test (no UI)
+npm run check      # node --check every source file (fast, offline)
+npm test           # node:test unit tests (offline, no quota)
+node scripts/smoke-mcp.mjs   # end-to-end agent test — SPENDS ChatGPT quota
 ```
 
 ## Architecture
@@ -20,8 +22,12 @@ npm run smoke      # agent-only smoke test (no UI)
 main.js                    Electron main — window, IPC, tool round-trips (askRenderer)
 preload.cjs                contextBridge: window.clara { send, onEvent, onToolRequest, reply, … }
 agent/agent.js             AgentService — one Codex instance+thread per conversation
+                           (startThread / resumeThread for persistence)
 agent/mcp-server.js        Clara's tools over streamable HTTP: open_url, list_tabs,
                            read_page, interact (stateless, /mcp/<conversationId>)
+agent/store.js             session.json read/write (debounced) in userData
+renderer/session.js        serialize/rehydrate the UI to/from that store
+tests/                     node:test offline units (store round-trip, resume)
 agent-home/                Clara's home. AGENTS.md is GENERATED per new thread
                            from SOUL.md (voice) + USER.md (user profile) +
                            MEMORY.md (her lessons) + CONTRACT.md (harness rules).
@@ -123,6 +129,16 @@ for interactions.
 
 Verified headless via `scripts/smoke-memory.mjs`: identity recall, history
 grep ("abajur" → page title+url+detail), and a USER.md self-update.
+
+## Persistence
+
+The whole UI session (conversations, tabs, groups, chat messages, active
+selection) is serialized to `session.json` in Electron's `userData` and
+rehydrated on boot. Webviews reload from their saved URLs; Codex conversations
+resume by thread id (`resumeThread`), so follow-up messages continue the same
+thread. Saves are debounced; the thread id is captured from the
+`thread.started` event and merged in main (authoritative). Covered by
+`tests/store.test.mjs` and `tests/agent.test.mjs`.
 
 ## Ideas beyond the prototype
 

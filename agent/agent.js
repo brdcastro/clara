@@ -41,6 +41,20 @@ export class AgentService {
     this.threads = new Map();
     this.aborts = new Map();
     this.queues = new Map();
+    // conversationId -> Codex thread id, for resuming across restarts.
+    this.resumeIds = new Map();
+  }
+
+  // Register a persisted thread id so the next #thread() resumes it instead
+  // of starting fresh (called during session rehydration).
+  registerResume(conversationId, threadId) {
+    if (threadId) this.resumeIds.set(conversationId, threadId);
+  }
+
+  // The live Codex thread id for a conversation, once known (persisted so the
+  // conversation resumes after a restart).
+  threadId(conversationId) {
+    return this.threads.get(conversationId)?.id ?? this.resumeIds.get(conversationId) ?? null;
   }
 
   #codexFor(conversationId) {
@@ -84,14 +98,19 @@ export class AgentService {
     let thread = this.threads.get(conversationId);
     if (!thread) {
       composeAgentsMd();
-      thread = this.#codexFor(conversationId).startThread({
+      const codex = this.#codexFor(conversationId);
+      const options = {
         workingDirectory: AGENT_HOME,
         skipGitRepoCheck: true,
         // Writable so Clara can update USER.md/MEMORY.md (her own home).
         sandboxMode: "workspace-write",
         approvalPolicy: "never",
         modelReasoningEffort: "low",
-      });
+      };
+      const resumeId = this.resumeIds.get(conversationId);
+      thread = resumeId
+        ? codex.resumeThread(resumeId, options)
+        : codex.startThread(options);
       this.threads.set(conversationId, thread);
     }
     return thread;

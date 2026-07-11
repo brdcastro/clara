@@ -4,9 +4,10 @@
   "description": "LLM-first browser prototype",
   "main": "main.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test tests/*.test.mjs",
     "start": "electron .",
-    "smoke": "node scripts/smoke-codex.mjs"
+    "smoke": "node scripts/smoke-codex.mjs",
+    "check": "node --check main.js && node --check preload.cjs && node --check agent/agent.js && node --check agent/mcp-server.js && node --check agent/history.js && node --check agent/store.js && node --check renderer/app.js && node --check renderer/session.js && node --check renderer/page-scripts.js"
   },
   "keywords": [],
   "author": "",

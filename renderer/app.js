@@ -31,6 +31,13 @@ let nextTabId = 1;
 let nextGroupId = 1;
 let activeConsent = null; // { tabId, finish }
 
+const session = window.ClaraSession({
+  conversations,
+  groups,
+  getActiveId: () => activeId,
+  getCounters: () => ({ nextId, nextTabId, nextGroupId }),
+});
+
 const SUGGESTIONS = [
   "Como funcionam juros compostos? Me dá um simulador",
   "Abre o site do Hacker News",
@@ -94,8 +101,8 @@ window.addEventListener("message", (event) => {
 
 /* ── Conversations ───────────────────────────────────── */
 
-function createConversation({ warmup = true } = {}) {
-  const id = `conv-${nextId++}`;
+function createConversation({ warmup = true, restore = null } = {}) {
+  const id = restore?.id ?? `conv-${nextId++}`;
   const feedEl = document.createElement("div");
   feedEl.className = "feed";
   const innerEl = document.createElement("div");
@@ -105,19 +112,30 @@ function createConversation({ warmup = true } = {}) {
 
   const conv = {
     id,
-    title: null,
+    title: restore?.title ?? null,
+    threadId: restore?.threadId ?? null,
     feedEl,
     innerEl,
     running: false,
     statusEl: null,
+    messages: [], // { role: "user"|"ai"|"error", text?, html? }
     tabs: new Map(), // tabId -> { tabId, url, title, favicon, webview, interactAllowed }
-    activeTabId: null,
+    activeTabId: restore?.activeTabId ?? null,
   };
   conversations.set(id, conv);
+
+  if (restore) {
+    if (conv.threadId) window.clara.registerResume(id, conv.threadId);
+    for (const msg of restore.messages ?? []) replayMessage(conv, msg);
+    if (!conv.messages.length) renderEmptyState(conv);
+    return conv; // caller handles tabs, sidebar, activation
+  }
+
   renderEmptyState(conv);
   renderSidebar();
   activate(id);
   if (warmup) window.clara.warmup(id);
+  session.scheduleSave();
   return conv;
 }
 
@@ -151,6 +169,7 @@ function moveToGroup(convId, groupId) {
   if (current) current.convIds = current.convIds.filter((id) => id !== convId);
   if (groupId != null) groups.get(groupId)?.convIds.push(convId);
   renderSidebar();
+  session.scheduleSave();
 }
 
 function convLabel(conv) {
@@ -237,6 +256,7 @@ function renderGroup(group) {
     event.stopPropagation();
     group.collapsed = !group.collapsed;
     renderSidebar();
+    session.scheduleSave();
   };
 
   const name = document.createElement("span");
@@ -265,6 +285,7 @@ function renderGroup(group) {
     group.name = name.textContent.trim() || "Grupo";
     name.textContent = group.name;
     name.contentEditable = "false";
+    session.scheduleSave();
   });
   group._startRename = startRename;
 
@@ -309,8 +330,7 @@ itemListEl.addEventListener("drop", (event) => {
   if (convId) moveToGroup(convId, null);
 });
 
-function createGroup(name) {
-  const id = nextGroupId++;
+function createGroup(name, id = nextGroupId++) {
   const group = {
     id,
     name,
@@ -327,6 +347,7 @@ newGroupBtn.onclick = () => {
   const group = createGroup("Grupo");
   renderSidebar();
   group._startRename?.();
+  session.scheduleSave();
 };
 
 /* ── Popups → sibling tabs in the origin's group ─────── */
@@ -360,6 +381,7 @@ window.clara.onPopup(({ sourceWebContentsId, url, disposition }) => {
   // Background dispositions (cmd+click) keep the origin focused.
   if (disposition === "background-tab") activate(originConvId);
   renderSidebar();
+  session.scheduleSave();
 });
 
 /* ── Group home: thumbnails + Clara's summary ────────── */
@@ -554,7 +576,8 @@ function scrollToBottom(conv) {
   conv.feedEl.scrollTop = conv.feedEl.scrollHeight;
 }
 
-function addUserCard(conv, text) {
+// DOM-only builders (used both live and during rehydration).
+function renderUserBubble(conv, text) {
   conv.innerEl.querySelector(".empty")?.remove();
   const el = document.createElement("div");
   el.className = "msg-user";
@@ -564,7 +587,8 @@ function addUserCard(conv, text) {
   scrollToBottom(conv);
 }
 
-function addAiCard(conv, html) {
+function renderAiBubble(conv, html) {
+  conv.innerEl.querySelector(".empty")?.remove();
   const card = document.createElement("div");
   card.className = "card-ai";
   const iframe = document.createElement("iframe");
@@ -576,13 +600,39 @@ function addAiCard(conv, html) {
   scrollToBottom(conv);
 }
 
-function addErrorCard(conv, message) {
+function renderErrorBubble(conv, message) {
   const el = document.createElement("div");
   el.className = "card-error";
   el.textContent = message;
   conv.innerEl.appendChild(el);
   updateLastPair(conv);
   scrollToBottom(conv);
+}
+
+function replayMessage(conv, msg) {
+  conv.messages.push(msg);
+  if (msg.role === "user") renderUserBubble(conv, msg.text);
+  else if (msg.role === "ai") renderAiBubble(conv, msg.html);
+  else if (msg.role === "error") renderErrorBubble(conv, msg.text);
+}
+
+// Live adders: render + record + persist.
+function addUserCard(conv, text) {
+  renderUserBubble(conv, text);
+  conv.messages.push({ role: "user", text });
+  session.scheduleSave();
+}
+
+function addAiCard(conv, html) {
+  renderAiBubble(conv, html);
+  conv.messages.push({ role: "ai", html });
+  session.scheduleSave();
+}
+
+function addErrorCard(conv, message) {
+  renderErrorBubble(conv, message);
+  conv.messages.push({ role: "error", text: message });
+  session.scheduleSave();
 }
 
 function setStatus(conv, text) {
@@ -625,19 +675,27 @@ function syncTab(conv, tab) {
   renderSidebar();
   renderStageHead();
   window.clara.tabUpdated(conv.id, { tabId: tab.tabId, url: tab.url, title: tab.title });
+  session.scheduleSave();
 }
 
-function createTab(conv, url) {
+function createTab(conv, url, { restore = null } = {}) {
   conv.innerEl.querySelector(".empty")?.remove();
 
-  const tabId = `tab-${nextTabId++}`;
+  const tabId = restore?.tabId ?? `tab-${nextTabId++}`;
   const webview = document.createElement("webview");
   webview.className = "site-view";
   webview.setAttribute("src", url);
   webview.dataset.tabId = tabId;
   stageViewsEl.appendChild(webview);
 
-  const tab = { tabId, url, title: domainOf(url), favicon: null, webview, interactAllowed: false };
+  const tab = {
+    tabId,
+    url,
+    title: restore?.title || domainOf(url),
+    favicon: restore?.favicon ?? null,
+    webview,
+    interactAllowed: false,
+  };
   conv.tabs.set(tabId, tab);
   conv.activeTabId = tabId;
 
@@ -713,6 +771,7 @@ function setActiveTab(conv, tabId) {
   conv.activeTabId = tabId;
   renderStage();
   renderSidebar();
+  session.scheduleSave();
 }
 
 function closeTab(conv, tabId) {
@@ -727,6 +786,7 @@ function closeTab(conv, tabId) {
   syncMode();
   if (activeHome != null) renderGroupHome();
   window.clara.tabClosed(conv.id, tabId);
+  session.scheduleSave();
 }
 
 function displayedTab() {
@@ -895,6 +955,14 @@ window.clara.onEvent(({ conversationId, event }) => {
   if (!conv) return;
 
   switch (event.type) {
+    case "thread.started":
+      // Persist the Codex thread id so this conversation resumes on restart.
+      if (event.thread_id && conv.threadId !== event.thread_id) {
+        conv.threadId = event.thread_id;
+        window.clara.registerResume(conv.id, event.thread_id);
+        session.scheduleSave();
+      }
+      break;
     case "turn.started":
       setStatus(conv, "pensando…");
       break;
@@ -1020,6 +1088,46 @@ new ResizeObserver(() => {
 
 newConvBtn.onclick = () => createConversation();
 
-/* ── Boot ────────────────────────────────────────────── */
+/* ── Boot / session restore ──────────────────────────── */
 
-createConversation();
+async function restoreSession() {
+  let state;
+  try {
+    state = await window.clara.loadSession();
+  } catch {
+    state = null;
+  }
+  if (!state?.conversations?.length) return false;
+
+  // Counters first, so restored ids never collide with new ones.
+  nextId = state.counters?.nextId ?? 1;
+  nextTabId = state.counters?.nextTabId ?? 1;
+  nextGroupId = state.counters?.nextGroupId ?? 1;
+
+  for (const savedConv of state.conversations) {
+    const conv = createConversation({ restore: savedConv });
+    for (const savedTab of savedConv.tabs ?? []) {
+      createTab(conv, savedTab.url, { restore: savedTab });
+    }
+    if (savedConv.activeTabId && conv.tabs.has(savedConv.activeTabId)) {
+      conv.activeTabId = savedConv.activeTabId;
+    }
+  }
+
+  for (const savedGroup of state.groups ?? []) {
+    const group = createGroup(savedGroup.name, savedGroup.id);
+    group.collapsed = savedGroup.collapsed;
+    group.convIds = savedGroup.convIds.filter((id) => conversations.has(id));
+  }
+
+  const first = state.activeId && conversations.has(state.activeId)
+    ? state.activeId
+    : conversations.keys().next().value;
+  renderSidebar();
+  activate(first);
+  return true;
+}
+
+restoreSession().then((restored) => {
+  if (!restored) createConversation();
+});

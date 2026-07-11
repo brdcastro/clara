@@ -33,4 +33,10 @@ contextBridge.exposeInMainWorld("clara", {
 
   // One-off utility prompt (group-home summaries); resolves with HTML text.
   summarize: (prompt) => ipcRenderer.invoke("clara:summarize", { prompt }),
+
+  // Session persistence.
+  loadSession: () => ipcRenderer.invoke("clara:load-session"),
+  saveSession: (state) => ipcRenderer.send("clara:save-session", state),
+  registerResume: (conversationId, threadId) =>
+    ipcRenderer.send("clara:register-resume", { conversationId, threadId }),
 });
