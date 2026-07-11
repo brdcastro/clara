@@ -53,6 +53,12 @@ const CARD_STYLE = `
     --serif:"EB Garamond",Georgia,serif; --sans:"Inter",system-ui,sans-serif;
     --mono:"JetBrains Mono",ui-monospace,monospace;
   }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#1C1814; --surface:#242019; --ink:#F2EFE8; --ink-dim:#D8D1C5;
+      --ink-muted:#9D9080; --accent:#1E97F2; --border:#332D25;
+    }
+  }
   html,body { margin:0; background:transparent; color:var(--ink);
     font:14.5px/1.55 var(--sans); -webkit-font-smoothing:antialiased; }
   body { padding:18px 22px; }
@@ -520,6 +526,7 @@ function syncMode() {
   }
   renderStage();
   renderSidebar();
+  updateComposer();
   if (conv) {
     updateLastPair(conv);
     collapseOverlay(conv);
@@ -1084,6 +1091,29 @@ function updateComposer() {
   const running = conv?.running ?? false;
   sendBtn.classList.toggle("running", running);
   sendBtn.title = running ? "Parar" : "Enviar";
+  renderContextChips();
+}
+
+// Contextual suggestions over an open site (cheap heuristics, no model call).
+const contextChipsEl = document.getElementById("context-chips");
+
+function renderContextChips() {
+  const conv = activeConv();
+  const siteOpen = !!conv && conv.tabs.size > 0 && activeHome == null;
+  const show = siteOpen && !conv.running;
+  contextChipsEl.hidden = !show;
+  if (!show) return;
+
+  const chips = ["Resume esta página", "O que vale minha atenção aqui?"];
+  if (conv.tabs.size > 1) chips.push("Compara as abas abertas");
+  contextChipsEl.innerHTML = "";
+  for (const text of chips) {
+    const chip = document.createElement("button");
+    chip.className = "chip";
+    chip.textContent = text;
+    chip.onclick = () => sendMessage(text);
+    contextChipsEl.appendChild(chip);
+  }
 }
 
 function sendMessage(text) {
