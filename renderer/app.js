@@ -866,7 +866,7 @@ window.clara.onToolRequest("open-tab", ({ requestId, conversationId, url }) => {
   setTimeout(settle, 8000);
 });
 
-window.clara.onToolRequest("read-page", async ({ requestId, conversationId, tabId }) => {
+window.clara.onToolRequest("read-page", async ({ requestId, conversationId, tabId, screenshot }) => {
   const conv = conversations.get(conversationId);
   const tab = conv && resolveTab(conv, tabId);
   if (!tab) {
@@ -878,6 +878,16 @@ window.clara.onToolRequest("read-page", async ({ requestId, conversationId, tabI
   try {
     const result = await tab.webview.executeJavaScript(ClaraPageScripts.extract(), true);
     result.tabId = tab.tabId;
+    if (screenshot) {
+      // Bring the tab on stage so capturePage has painted pixels to grab.
+      setActiveTab(conv, tab.tabId);
+      try {
+        const image = await tab.webview.capturePage();
+        result.screenshot = image.toDataURL();
+      } catch {
+        /* capture failed (hidden/navigating) — text-only result still useful */
+      }
+    }
     window.clara.reply("read-page", requestId, result);
   } catch (err) {
     window.clara.reply("read-page", requestId, { error: String(err?.message ?? err) });

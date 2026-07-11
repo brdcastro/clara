@@ -50,12 +50,22 @@ function buildServer(conversationId, bridge) {
       description:
         "Read the current content of an open tab: url, title, main text, and " +
         "the visible interactive elements (numbered refs usable with the " +
-        "interact tool). Omit tab_id to read the most recently opened tab.",
-      inputSchema: { tab_id: z.string().optional() },
+        "interact tool). Omit tab_id to read the most recently opened tab. " +
+        "Set screenshot=true to also receive an image of the page — do this " +
+        "for visual pages (charts, maps, diagrams, image-heavy layouts) where " +
+        "the text alone is not enough.",
+      inputSchema: {
+        tab_id: z.string().optional(),
+        screenshot: z.boolean().optional(),
+      },
     },
-    async ({ tab_id }) => {
-      const result = await bridge.readPage(conversationId, tab_id);
-      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    async ({ tab_id, screenshot }) => {
+      const result = await bridge.readPage(conversationId, tab_id, { screenshot });
+      const { screenshot: dataUrl, ...rest } = result;
+      const content = [{ type: "text", text: JSON.stringify(rest) }];
+      const image = imageBlockFromDataUrl(dataUrl);
+      if (image) content.push(image);
+      return { content };
     }
   );
 
@@ -81,6 +91,15 @@ function buildServer(conversationId, bridge) {
   );
 
   return server;
+}
+
+// Converts a `data:image/png;base64,…` URL into an MCP image content block,
+// or null when there is no usable image.
+export function imageBlockFromDataUrl(dataUrl) {
+  if (typeof dataUrl !== "string") return null;
+  const match = dataUrl.match(/^data:([\w/+.-]+);base64,(.+)$/s);
+  if (!match) return null;
+  return { type: "image", mimeType: match[1], data: match[2] };
 }
 
 async function readBody(req) {

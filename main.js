@@ -43,10 +43,17 @@ const bridge = {
   openUrl: (conversationId, url) =>
     askRenderer("open-tab", { conversationId, url }, 15000),
   listTabs: (conversationId) => [...(tabs.get(conversationId)?.values() ?? [])],
-  readPage: async (conversationId, tabId) => {
-    const result = await askRenderer("read-page", { conversationId, tabId }, 15000);
-    // Agent reads are the freshest snapshots — archive them too.
-    if (!result.error) history.record(result);
+  readPage: async (conversationId, tabId, { screenshot } = {}) => {
+    const result = await askRenderer(
+      "read-page",
+      { conversationId, tabId, screenshot: !!screenshot },
+      20000
+    );
+    // Agent reads are the freshest snapshots — archive text, not the image.
+    if (!result.error) {
+      const { screenshot: _drop, ...page } = result;
+      history.record(page);
+    }
     return result;
   },
   // Long timeout: the first interaction on a tab waits for user consent.

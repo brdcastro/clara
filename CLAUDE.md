@@ -5,6 +5,13 @@ the hard-won gotchas — read both before touching code). The repo owner tests
 the UI himself and rarely reads this repo; commits/pushes are expected from
 agents directly, small and frequent, in English.
 
+## Pending: activate CI
+
+`docs/ci-workflow.yml` is the CI config, parked outside `.github/workflows/`
+because the maintainer's OAuth token lacks `workflow` scope. To turn it on:
+`gh auth refresh -s workflow`, then `git mv docs/ci-workflow.yml
+.github/workflows/ci.yml` and push.
+
 ## Working rules
 
 - **Never launch the Electron app** (`npm start`) — the owner runs it and

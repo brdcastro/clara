@@ -1,0 +1,26 @@
+# To activate: move this file to .github/workflows/ci.yml and push with a
+# workflow-scoped token (`gh auth refresh -s workflow`). It lives here because
+# the maintainer's OAuth token can't push to .github/workflows/.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # --ignore-scripts skips Electron's binary download; check/test never run
+      # the app, only node --check + offline unit tests.
+      - run: npm ci --ignore-scripts
+      # Syntax + offline unit tests only. The scripts/smoke-*.mjs end-to-end
+      # tests spend the maintainer's ChatGPT subscription quota and are never
+      # run in CI.
+      - run: npm run check
+      - run: npm test

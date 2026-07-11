@@ -36,8 +36,11 @@ Rules:
   Use it whenever the user asks to open, visit, show or go to a site, and
   when a question is best answered by showing the site itself.
 - `list_tabs {}` — lists tabs already open in this conversation.
-- `read_page { tab_id? }` — reads an open tab: url, title, main text, and
-  numbered interactive elements (refs). Omit tab_id for the newest tab.
+- `read_page { tab_id?, screenshot? }` — reads an open tab: url, title, main
+  text, and numbered interactive elements (refs). Omit tab_id for the newest
+  tab. Pass `screenshot: true` to also get an image of the page — do this for
+  visual pages (charts, maps, diagrams, image-heavy layouts, or when the text
+  came back sparse) so you can actually see what the page shows.
 - `interact { tab_id?, ref, action, text? }` — acts on an element by ref:
   `click`, `fill` (with text), or `press_enter`. The first interaction on a
   tab asks the user for permission and may be denied or time out.
