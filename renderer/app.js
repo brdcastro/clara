@@ -101,7 +101,7 @@ window.addEventListener("message", (event) => {
 
 /* ── Conversations ───────────────────────────────────── */
 
-function createConversation({ warmup = true, restore = null } = {}) {
+function createConversation({ warmup = true, restore = null, focus = true } = {}) {
   const id = restore?.id ?? `conv-${nextId++}`;
   const feedEl = document.createElement("div");
   feedEl.className = "feed";
@@ -133,7 +133,7 @@ function createConversation({ warmup = true, restore = null } = {}) {
 
   renderEmptyState(conv);
   renderSidebar();
-  activate(id);
+  if (focus) activate(id);
   if (warmup) window.clara.warmup(id);
   session.scheduleSave();
   return conv;
@@ -688,6 +688,8 @@ function createTab(conv, url, { restore = null } = {}) {
   webview.dataset.tabId = tabId;
   stageViewsEl.appendChild(webview);
 
+  // ownerConv is dynamic: group_tabs can move a tab to another conversation,
+  // so every listener resolves the owner at event time.
   const tab = {
     tabId,
     url,
@@ -695,13 +697,14 @@ function createTab(conv, url, { restore = null } = {}) {
     favicon: restore?.favicon ?? null,
     webview,
     interactAllowed: false,
+    ownerConv: conv,
   };
   conv.tabs.set(tabId, tab);
   conv.activeTabId = tabId;
 
   webview.addEventListener("page-title-updated", (e) => {
     tab.title = e.title;
-    syncTab(conv, tab);
+    syncTab(tab.ownerConv, tab);
   });
   webview.addEventListener("page-favicon-updated", (e) => {
     tab.favicon = e.favicons?.[0] ?? null;
@@ -710,16 +713,16 @@ function createTab(conv, url, { restore = null } = {}) {
   });
   webview.addEventListener("did-navigate", (e) => {
     tab.url = e.url;
-    syncTab(conv, tab);
+    syncTab(tab.ownerConv, tab);
   });
   webview.addEventListener("did-navigate-in-page", (e) => {
     if (!e.isMainFrame) return;
     tab.url = e.url;
-    syncTab(conv, tab);
+    syncTab(tab.ownerConv, tab);
   });
   // Clicking into the site collapses the chat overlay.
   webview.addEventListener("focus", () => {
-    collapseOverlay(conv);
+    collapseOverlay(tab.ownerConv);
   });
 
   webview.addEventListener(
@@ -917,6 +920,59 @@ window.clara.onToolRequest("interact", async ({ requestId, conversationId, tabId
   } catch (err) {
     window.clara.reply("interact", requestId, { error: String(err?.message ?? err) });
   }
+});
+
+// group_tabs: split this conversation's tabs into their own sidebar items
+// inside a named group (created or reused by name). The chat conversation
+// itself joins the group as its root item.
+window.clara.onToolRequest("group-tabs", ({ requestId, conversationId, name, tabIds }) => {
+  const conv = conversations.get(conversationId);
+  if (!conv) {
+    window.clara.reply("group-tabs", requestId, { error: "unknown conversation" });
+    return;
+  }
+  const wanted = tabIds?.length ? tabIds : [...conv.tabs.keys()];
+  const targets = wanted.map((id) => conv.tabs.get(id)).filter(Boolean);
+  if (!targets.length) {
+    window.clara.reply("group-tabs", requestId, {
+      error: "no matching tabs in this conversation — open pages first",
+    });
+    return;
+  }
+
+  const trimmed = (name ?? "").trim() || "Grupo";
+  let group = [...groups.values()].find(
+    (g) => g.name.toLowerCase() === trimmed.toLowerCase()
+  );
+  if (!group) group = createGroup(trimmed);
+  if (!groupOf(conv.id)) group.convIds.push(conv.id);
+
+  const items = [];
+  for (const tab of targets) {
+    const target = createConversation({ warmup: false, focus: false });
+    conv.tabs.delete(tab.tabId);
+    window.clara.tabClosed(conv.id, tab.tabId);
+    tab.ownerConv = target;
+    target.tabs.set(tab.tabId, tab);
+    target.activeTabId = tab.tabId;
+    target.innerEl.querySelector(".empty")?.remove();
+    window.clara.tabUpdated(target.id, { tabId: tab.tabId, url: tab.url, title: tab.title });
+    group.convIds.push(target.id);
+    items.push({ tabId: tab.tabId, conversationId: target.id, title: tab.title, url: tab.url });
+  }
+  if (!conv.tabs.has(conv.activeTabId)) {
+    conv.activeTabId = [...conv.tabs.keys()].pop() ?? null;
+  }
+
+  syncMode();
+  session.scheduleSave();
+  // Show the payoff: the group home with thumbnails + summary.
+  openGroupHome(group.id);
+  window.clara.reply("group-tabs", requestId, {
+    groupId: group.id,
+    name: group.name,
+    items,
+  });
 });
 
 // First interaction on a tab shows a consent bar at the top of the stage.

@@ -90,6 +90,26 @@ function buildServer(conversationId, bridge) {
     }
   );
 
+  server.registerTool(
+    "group_tabs",
+    {
+      description:
+        "Organize this conversation's tabs into a named sidebar group: each " +
+        "tab becomes its own item inside the group (created if new, reused if " +
+        "a group with that name already exists), and the group home opens " +
+        "with thumbnails and a summary. Omit tab_ids to group every open tab. " +
+        "Use after opening several related pages for the user.",
+      inputSchema: {
+        name: z.string(),
+        tab_ids: z.array(z.string()).optional(),
+      },
+    },
+    async ({ name, tab_ids }) => {
+      const result = await bridge.groupTabs(conversationId, name, tab_ids);
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    }
+  );
+
   return server;
 }
 

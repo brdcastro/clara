@@ -59,6 +59,8 @@ const bridge = {
   // Long timeout: the first interaction on a tab waits for user consent.
   interact: (conversationId, tabId, action) =>
     askRenderer("interact", { conversationId, tabId, action }, 120000),
+  groupTabs: (conversationId, name, tabIds) =>
+    askRenderer("group-tabs", { conversationId, name, tabIds }, 15000),
 };
 
 function createWindow() {

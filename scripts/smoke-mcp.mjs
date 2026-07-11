@@ -6,7 +6,7 @@ import { AgentService } from "../agent/agent.js";
 
 const FAKE_PAGE = {
   tabId: "tab-1",
-  url: "https://news.exemplo.com/",
+  url: "https://portalnoticias.com.br/",
   title: "Notícias do Exemplo",
   text:
     "Notícias do Exemplo\n\nManchete: Cometa vira-lata é fotografado sobre o Atlântico.\n" +
@@ -20,10 +20,11 @@ const FAKE_PAGE = {
 };
 
 const calls = [];
+let tabCounter = 0;
 const bridge = {
   async openUrl(conversationId, url) {
     calls.push({ tool: "open_url", url });
-    return { tabId: "tab-1", url, title: FAKE_PAGE.title };
+    return { tabId: `tab-${++tabCounter}`, url, title: FAKE_PAGE.title };
   },
   listTabs() {
     calls.push({ tool: "list_tabs" });
@@ -36,6 +37,14 @@ const bridge = {
   async interact(conversationId, tabId, action) {
     calls.push({ tool: "interact", ...action });
     return { ok: true, did: action.action };
+  },
+  async groupTabs(conversationId, name, tabIds) {
+    calls.push({ tool: "group_tabs", name, tabIds: tabIds ?? null });
+    return {
+      groupId: 1,
+      name,
+      items: (tabIds ?? ["tab-1"]).map((tabId) => ({ tabId, conversationId: "conv-x" })),
+    };
   },
 };
 
@@ -60,8 +69,12 @@ async function scenario(label, prompt) {
   console.log(`  (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
 }
 
-await scenario("parte 2+3: abrir e ler", "Abre news.exemplo.com e me diz qual é a manchete de hoje");
+await scenario("parte 2+3: abrir e ler", "Abre portalnoticias.com.br e me diz qual é a manchete de hoje");
 await scenario("parte 4: interagir", "Pesquisa por 'granizo' nesse site");
+await scenario(
+  "grupos: curadoria",
+  "Abre casaeluz.com.br e iluminaria.com.br e agrupa tudo num grupo chamado Iluminação"
+);
 
 console.log("\n--- bridge calls ---");
 for (const call of calls) console.log(" ", JSON.stringify(call));

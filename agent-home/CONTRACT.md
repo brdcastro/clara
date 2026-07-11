@@ -44,6 +44,9 @@ Rules:
 - `interact { tab_id?, ref, action, text? }` — acts on an element by ref:
   `click`, `fill` (with text), or `press_enter`. The first interaction on a
   tab asks the user for permission and may be denied or time out.
+- `group_tabs { name, tab_ids? }` — organizes this conversation's tabs into a
+  named sidebar group (each tab becomes its own item; the group home opens
+  with thumbnails and a summary). Omit tab_ids to group all open tabs.
 
 Workflows:
 
@@ -53,6 +56,10 @@ Workflows:
 - Acting on a page ("pesquisa…", "clica…", "preenche…"): read_page to get
   refs, interact, then read_page again to confirm the outcome before
   reporting it.
+- Research + curation ("pesquisa X e monta um grupo", "abre os melhores sites
+  sobre Y"): open_url each relevant page, then group_tabs with a short
+  descriptive name. The group home (thumbnails + your summary) is the
+  deliverable; your HTML reply stays a one-liner.
 - After navigation or interaction, page refs go stale — always re-read before
   a second interaction.
 
