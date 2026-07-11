@@ -97,6 +97,30 @@ function stripFences(text) {
   return match ? match[1] : text;
 }
 
+/* Substantial answers become a full page on the stage (the site stays in
+   the tab behind, like navigating away in the same tab). The model marks
+   them with <!--clara:page-->; a heuristic promotes unmarked big answers. */
+
+const PAGE_MARKER = /^\s*<!--\s*clara:page\s*-->/i;
+
+function isPageAnswer(html) {
+  if (PAGE_MARKER.test(html)) return true;
+  return html.length > 1600 || /<table[\s>]|<h1[\s>]/i.test(html);
+}
+
+function wrapPageHtml(html) {
+  const PAGE_STYLE =
+    CARD_STYLE +
+    `
+    html, body { background: var(--bg); }
+    body { padding: 52px 44px 150px; }
+    .clara-page-col { max-width: 800px; margin: 0 auto; }
+    h1 { font-size: 32px; } h2 { font-size: 23px; } h3 { font-size: 18px; }
+    body { font-size: 15px; }
+  `;
+  return `<!doctype html><html><head><meta charset="utf-8">${FONTS_LINK}<style>${PAGE_STYLE}</style></head><body><div class="clara-page-col">${html}</div></body></html>`;
+}
+
 window.addEventListener("message", (event) => {
   if (event.data?.type !== "clara:height") return;
   for (const iframe of document.querySelectorAll(".card-ai iframe")) {
@@ -125,9 +149,11 @@ function createConversation({ warmup = true, restore = null, focus = true } = {}
     innerEl,
     running: false,
     statusEl: null,
-    messages: [], // { role: "user"|"ai"|"error", text?, html? }
+    messages: [], // { role: "user"|"ai"|"error", text?, html?, page? }
     tabs: new Map(), // tabId -> { tabId, url, title, favicon, webview, interactAllowed }
     activeTabId: restore?.activeTabId ?? null,
+    pageFrame: null, // stage iframe for page answers
+    showingPage: false,
   };
   conversations.set(id, conv);
 
@@ -517,7 +543,7 @@ function syncMode() {
   const conv = activeConv();
   if (activeHome != null && !groups.has(activeHome)) activeHome = null;
   const homeOpen = activeHome != null;
-  const siteMode = !!conv && conv.tabs.size > 0;
+  const siteMode = !!conv && (conv.tabs.size > 0 || conv.showingPage);
   document.body.classList.toggle("home-mode", homeOpen);
   document.body.classList.toggle("site-mode", siteMode);
   stageEl.hidden = !siteMode && !homeOpen;
@@ -620,8 +646,40 @@ function renderErrorBubble(conv, message) {
 function replayMessage(conv, msg) {
   conv.messages.push(msg);
   if (msg.role === "user") renderUserBubble(conv, msg.text);
+  else if (msg.role === "ai" && msg.page) renderPageStub(conv, msg.html);
   else if (msg.role === "ai") renderAiBubble(conv, msg.html);
   else if (msg.role === "error") renderErrorBubble(conv, msg.text);
+}
+
+// A page answer shows on the stage; the chat gets a clickable stub so the
+// history stays navigable.
+function renderPageStub(conv, html) {
+  conv.innerEl.querySelector(".empty-state")?.remove();
+  const stub = document.createElement("div");
+  stub.className = "page-stub";
+  stub.innerHTML = '<span class="page-stub-icon">▤</span><span>Resposta aberta como página — clique para reabrir</span>';
+  stub.onclick = () => showPage(conv, html);
+  conv.innerEl.appendChild(stub);
+  updateLastPair(conv);
+  scrollToBottom(conv);
+}
+
+function showPage(conv, html) {
+  if (!conv.pageFrame) {
+    const frame = document.createElement("iframe");
+    frame.className = "page-view";
+    frame.setAttribute("sandbox", "allow-scripts");
+    stageViewsEl.appendChild(frame);
+    conv.pageFrame = frame;
+  }
+  conv.pageFrame.srcdoc = wrapPageHtml(stripFences(html).replace(PAGE_MARKER, ""));
+  conv.showingPage = true;
+  syncMode();
+}
+
+function hidePage(conv) {
+  conv.showingPage = false;
+  syncMode();
 }
 
 // Live adders: render + record + persist.
@@ -632,8 +690,15 @@ function addUserCard(conv, text) {
 }
 
 function addAiCard(conv, html) {
-  renderAiBubble(conv, html);
-  conv.messages.push({ role: "ai", html });
+  const clean = stripFences(html);
+  if (isPageAnswer(clean)) {
+    renderPageStub(conv, html);
+    showPage(conv, html);
+    conv.messages.push({ role: "ai", html, page: true });
+  } else {
+    renderAiBubble(conv, html);
+    conv.messages.push({ role: "ai", html });
+  }
   session.scheduleSave();
 }
 
@@ -709,6 +774,7 @@ function createTab(conv, url, { restore = null } = {}) {
   };
   conv.tabs.set(tabId, tab);
   conv.activeTabId = tabId;
+  conv.showingPage = false; // a new site takes the stage over any page answer
 
   webview.addEventListener("page-title-updated", (e) => {
     tab.title = e.title;
@@ -786,6 +852,7 @@ function createTab(conv, url, { restore = null } = {}) {
 function setActiveTab(conv, tabId) {
   if (!conv.tabs.has(tabId)) return;
   conv.activeTabId = tabId;
+  conv.showingPage = false; // choosing a site brings it forward
   renderStage();
   renderSidebar();
   session.scheduleSave();
@@ -814,22 +881,32 @@ function displayedTab() {
 
 // Webviews must never be reparented or display:none'd (both reload/break the
 // guest), so every webview stays in #stage-views and visibility toggles.
+// A conversation's page answer, when open, covers its site.
 function renderStage() {
-  const shown = activeHome != null ? null : displayedTab();
+  const active = activeConv();
+  const pageOpen = activeHome == null && !!active?.showingPage;
+  const shown = activeHome != null || pageOpen ? null : displayedTab();
   for (const conv of conversations.values()) {
     for (const tab of conv.tabs.values()) {
       tab.webview.classList.toggle("shown", tab === shown);
+    }
+    if (conv.pageFrame) {
+      conv.pageFrame.classList.toggle("shown", conv === active && pageOpen);
     }
   }
   renderSiteControls();
 }
 
-// Site controls live inside the composer pill (one floating strip).
+// Site controls live inside the composer pill (one floating strip). When a
+// page answer is on stage, back/close act on the page (returning to the
+// site), Chrome-style same-tab navigation.
 function renderSiteControls() {
+  const conv = activeConv();
+  const pageOpen = activeHome == null && !!conv?.showingPage;
   const tab = activeHome != null ? null : displayedTab();
-  siteControlsEl.hidden = !tab;
-  if (!tab) return;
-  if (tab.favicon) {
+  siteControlsEl.hidden = !tab && !pageOpen;
+  if (siteControlsEl.hidden) return;
+  if (!pageOpen && tab?.favicon) {
     composerFaviconEl.src = tab.favicon;
     composerFaviconEl.hidden = false;
   } else {
@@ -838,13 +915,33 @@ function renderSiteControls() {
   }
 }
 
-siteControlsEl.querySelector('[data-act="back"]').onclick = () => displayedTab()?.webview.goBack();
-siteControlsEl.querySelector('[data-act="fwd"]').onclick = () => displayedTab()?.webview.goForward();
-siteControlsEl.querySelector('[data-act="reload"]').onclick = () => displayedTab()?.webview.reload();
+siteControlsEl.querySelector('[data-act="back"]').onclick = () => {
+  const conv = activeConv();
+  if (conv?.showingPage) hidePage(conv);
+  else displayedTab()?.webview.goBack();
+};
+siteControlsEl.querySelector('[data-act="fwd"]').onclick = () => {
+  const conv = activeConv();
+  const pageHtml = conv && !conv.showingPage ? lastPageHtml(conv) : null;
+  if (pageHtml && conv.pageFrame) showPage(conv, pageHtml);
+  else displayedTab()?.webview.goForward();
+};
+siteControlsEl.querySelector('[data-act="reload"]').onclick = () => {
+  const conv = activeConv();
+  if (!conv?.showingPage) displayedTab()?.webview.reload();
+};
 siteControlsEl.querySelector('[data-act="close"]').onclick = () => {
   const conv = activeConv();
-  if (conv?.activeTabId) closeTab(conv, conv.activeTabId);
+  if (conv?.showingPage) hidePage(conv);
+  else if (conv?.activeTabId) closeTab(conv, conv.activeTabId);
 };
+
+function lastPageHtml(conv) {
+  for (let i = conv.messages.length - 1; i >= 0; i--) {
+    if (conv.messages[i].page) return conv.messages[i].html;
+  }
+  return null;
+}
 
 /* ── Tool requests from the agent ────────────────────── */
 

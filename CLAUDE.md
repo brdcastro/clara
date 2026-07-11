@@ -29,6 +29,9 @@ because the maintainer's OAuth token lacks `workflow` scope. To turn it on:
     browser — it stubs `window.clara` and can rehydrate any session state
     via `sessionStorage.setItem("harness", JSON.stringify(state))`. This is
     how the .empty class-collision bug was found; prefer it over guessing.
+    Known harness limit: sandboxed srcdoc iframes (AI bubbles, page answers)
+    render blank in the embedded Browser pane — verify their logic/geometry
+    there, but pixel-rendering only shows in the real app.
     Never commit real session data (personal) used for reproduction.
   - `node --check` every file you touch (main is ESM, preload is CJS,
     renderer files are classic scripts — no modules).
