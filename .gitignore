@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.DS_Store
+# Generated per-thread from SOUL/USER/MEMORY/CONTRACT
+agent-home/AGENTS.md
+# Personal browsing data
+agent-home/history/

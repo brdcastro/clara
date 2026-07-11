@@ -1,0 +1,23 @@
+{
+  "name": "clara",
+  "version": "0.1.0",
+  "description": "LLM-first browser prototype",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "electron .",
+    "smoke": "node scripts/smoke-codex.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@openai/codex-sdk": "^0.144.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "electron": "^43.1.0"
+  }
+}
