@@ -1,10 +1,29 @@
 # Clara
 
-LLM-first browser prototype: no URL bar — a chat composer drives everything.
-The agent answers as rich interactive HTML cards, opens real sites inline in
-the feed, reads them, and interacts with them (with per-tab user consent).
+**An LLM-first browser.** No URL bar — a chat composer drives everything.
+Ask, and Clara answers as rich interactive HTML; name a site, and it takes
+the stage while the conversation floats above it. She reads the pages you
+open, acts on them with your consent, remembers who you are, keeps a
+searchable memory of everywhere you've been, and curates tabs into groups
+with thumbnails and her own summaries.
 
-Runs on the user's **ChatGPT subscription** via the Codex SDK — no API key.
+Runs entirely on your **ChatGPT subscription** via the Codex SDK — no API
+key, no per-token bill. macOS, Electron, vanilla JS, MIT.
+
+> Prototype status: built agent-first (see CLAUDE.md); UI screenshots coming.
+
+## Highlights
+
+- **Answers are interfaces**: replies render as sandboxed HTML cards — from a
+  one-line answer to a working calculator or comparison table.
+- **Sites are conversation**: open/read/interact tools let Clara browse with
+  you (first interaction per tab requires your consent).
+- **Memory with a soul**: SOUL/USER/MEMORY files compose her identity; she
+  updates her own notes as she learns you.
+- **"Onde eu vi aquilo?"**: every visited page is archived as grep-able
+  markdown; Clara searches her own history to answer.
+- **Groups with a home**: popup links auto-group with their origin; each
+  group gets a home page with thumbnails and an LLM-written summary.
 
 ## Run
 
@@ -13,8 +32,13 @@ npm install
 npm start          # Electron app
 npm run check      # node --check every source file (fast, offline)
 npm test           # node:test unit tests (offline, no quota)
+npm run dist       # package dist/mac-arm64/Clara.app (unsigned, no icon yet)
 node scripts/smoke-mcp.mjs   # end-to-end agent test — SPENDS ChatGPT quota
 ```
+
+Packaged builds move Clara's agent home to `userData/agent-home` (seeded on
+first run) since the app bundle is read-only; downloads save to ~/Downloads
+with a notice in the feed.
 
 ## Architecture
 

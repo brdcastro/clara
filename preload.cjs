@@ -31,6 +31,11 @@ contextBridge.exposeInMainWorld("clara", {
     ipcRenderer.on("clara:popup", (_event, payload) => fn(payload));
   },
 
+  // Finished downloads (saved to ~/Downloads).
+  onDownloadDone: (fn) => {
+    ipcRenderer.on("clara:download-done", (_event, payload) => fn(payload));
+  },
+
   // One-off utility prompt (group-home summaries); resolves with HTML text.
   summarize: (prompt) => ipcRenderer.invoke("clara:summarize", { prompt }),
 

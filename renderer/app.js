@@ -1021,6 +1021,26 @@ function ensureInteractionAllowed(conv, tab, action) {
   });
 }
 
+/* ── Downloads ───────────────────────────────────────── */
+
+// Transient notice pill in the active feed when a download finishes.
+window.clara.onDownloadDone(({ filename, state }) => {
+  const conv = activeConv();
+  if (!conv) return;
+  const notice = document.createElement("div");
+  notice.className = "status-line notice";
+  const label =
+    state === "completed"
+      ? `arquivo baixado: ${filename} — pasta Downloads`
+      : `download falhou: ${filename}`;
+  notice.innerHTML = '<span class="pulse"></span><span class="label"></span>';
+  notice.querySelector(".label").textContent = label;
+  conv.innerEl.appendChild(notice);
+  updateLastPair(conv);
+  scrollToBottom(conv);
+  setTimeout(() => notice.remove(), 8000);
+});
+
 /* ── Agent events ────────────────────────────────────── */
 
 window.clara.onEvent(({ conversationId, event }) => {

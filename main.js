@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, session } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AgentService } from "./agent/agent.js";
@@ -7,7 +8,30 @@ import { createHistory } from "./agent/history.js";
 import { createStore } from "./agent/store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const history = createHistory(path.join(__dirname, "agent-home"));
+
+// In development the agent home is the repo's agent-home/. Packaged apps
+// can't let Clara write inside the bundle, so her home moves to userData,
+// seeded from the bundled identity files on first run.
+function resolveAgentHome() {
+  const bundled = path.join(__dirname, "agent-home");
+  if (!app.isPackaged) return bundled;
+  const home = path.join(app.getPath("userData"), "agent-home");
+  fs.mkdirSync(home, { recursive: true });
+  for (const name of ["SOUL.md", "USER.md", "MEMORY.md", "CONTRACT.md"]) {
+    const target = path.join(home, name);
+    if (!fs.existsSync(target)) {
+      try {
+        fs.copyFileSync(path.join(bundled, name), target);
+      } catch {
+        /* missing seed — composeAgentsMd skips absent files */
+      }
+    }
+  }
+  return home;
+}
+
+const agentHome = resolveAgentHome();
+const history = createHistory(agentHome);
 const store = createStore(app.getPath("userData"));
 
 let win = null;
@@ -99,10 +123,34 @@ app.on("web-contents-created", (_event, contents) => {
   });
 });
 
+// Unique path in ~/Downloads: "file.pdf" -> "file (1).pdf" when taken.
+function uniqueDownloadPath(filename) {
+  const dir = app.getPath("downloads");
+  const ext = path.extname(filename);
+  const base = path.basename(filename, ext);
+  let candidate = path.join(dir, filename);
+  for (let n = 1; fs.existsSync(candidate); n++) {
+    candidate = path.join(dir, `${base} (${n})${ext}`);
+  }
+  return candidate;
+}
+
 app.whenReady().then(async () => {
   const { port } = await startMcpServer(bridge);
-  agent = new AgentService({ mcpPort: port });
+  agent = new AgentService({ mcpPort: port, agentHome });
   createWindow();
+
+  // Downloads land in ~/Downloads without dialogs; the renderer shows a
+  // notice when each one finishes.
+  session.defaultSession.on("will-download", (_event, item) => {
+    item.setSavePath(uniqueDownloadPath(item.getFilename()));
+    item.once("done", (_doneEvent, state) => {
+      win?.webContents.send("clara:download-done", {
+        filename: path.basename(item.getSavePath()),
+        state,
+      });
+    });
+  });
 
   // One-off utility prompts (e.g. group-home summaries) on a shared thread.
   ipcMain.handle("clara:summarize", (_event, { prompt }) =>

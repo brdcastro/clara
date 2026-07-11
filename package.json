@@ -7,7 +7,8 @@
     "test": "node --test tests/*.test.mjs",
     "start": "electron .",
     "smoke": "node scripts/smoke-codex.mjs",
-    "check": "node --check main.js && node --check preload.cjs && node --check agent/agent.js && node --check agent/mcp-server.js && node --check agent/history.js && node --check agent/store.js && node --check renderer/app.js && node --check renderer/session.js && node --check renderer/page-scripts.js"
+    "check": "node --check main.js && node --check preload.cjs && node --check agent/agent.js && node --check agent/mcp-server.js && node --check agent/history.js && node --check agent/store.js && node --check renderer/app.js && node --check renderer/session.js && node --check renderer/page-scripts.js",
+    "dist": "electron-builder --mac dir"
   },
   "keywords": [],
   "author": "",
@@ -19,6 +20,25 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "electron": "^43.1.0"
+    "electron": "^43.1.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.brennocastro.clara",
+    "productName": "Clara",
+    "asarUnpack": [
+      "node_modules/@openai/codex*/**"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity"
+    },
+    "files": [
+      "main.js",
+      "preload.cjs",
+      "agent/**",
+      "renderer/**",
+      "agent-home/*.md",
+      "!agent-home/AGENTS.md"
+    ]
   }
 }
