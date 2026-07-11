@@ -5,6 +5,14 @@ the hard-won gotchas — read both before touching code). The repo owner tests
 the UI himself and rarely reads this repo; commits/pushes are expected from
 agents directly, small and frequent, in English.
 
+## Pending (needs the owner)
+
+- **UI test pass**: everything since session persistence shipped without a
+  human UI run (owner was away). Treat reported UI bugs as expected findings.
+- **app.js modularization**: ~1300 lines and growing; split deliberately NOT
+  done blind — do it alongside an owner-verified UI cycle.
+- **App icon** (design asset) and **README GIF** (needs the running app).
+
 ## Pending: activate CI
 
 `docs/ci-workflow.yml` is the CI config, parked outside `.github/workflows/`
