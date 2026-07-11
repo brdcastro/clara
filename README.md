@@ -41,9 +41,18 @@ site (or Esc, or sending a message) collapses it back.
 **Sidebar**: tabs and conversations are deliberately the same thing — one
 item per context. An item with one tab wears that page's favicon/title; with
 several tabs its pages nest under it. Users can create custom groups
-(❐ button, name editable inline) and drag items into them; dropping on the
-list background ungroups. The sidebar is translucent over macOS vibrancy
+(❐ button, rename via double-click) and drag items into them; dropping on
+the list background ungroups. The sidebar is translucent over macOS vibrancy
 (`vibrancy: "sidebar"` + transparent body, solid `#main`).
+
+**Auto-groups & group home**: target=_blank / window.open popups are denied
+in main and reopened as sibling items, auto-grouped with the origin site
+(group named after its domain; cmd+click keeps focus via disposition).
+Clicking a group header opens the **group home** on the stage: thumbnail
+grid of the group's pages (captured on page settle via `capturePage`) plus a
+2–3 sentence summary written by Clara on a shared utility thread
+(`agent.summarize`), cached by member-URL key and refreshed when membership
+changes. Esc or opening any item leaves the home.
 
 - **Agent**: `@openai/codex-sdk` → spawns bundled `codex exec`. Auth comes from
   `~/.codex/auth.json` (ChatGPT login). Threads persist in `~/.codex/sessions`.

@@ -15,12 +15,17 @@ const stageEl = document.getElementById("stage");
 const stageViewsEl = document.getElementById("stage-views");
 const stageHead = stageEl.querySelector(".site-head");
 const composerWrapEl = document.getElementById("composer-wrap");
+const groupHomeEl = document.getElementById("group-home");
+const homeTitleEl = groupHomeEl.querySelector(".home-title");
+const homeSummaryEl = groupHomeEl.querySelector(".home-summary");
+const homeGridEl = groupHomeEl.querySelector(".home-grid");
 
 const conversations = new Map();
 // Sidebar groups: user-made collections of items. A conversation lives in at
 // most one group; ungrouped ones render at the root.
 const groups = new Map(); // id -> { id, name, collapsed, convIds: [] }
 let activeId = null;
+let activeHome = null; // groupId whose home page is on stage, or null
 let nextId = 1;
 let nextTabId = 1;
 let nextGroupId = 1;
@@ -89,7 +94,7 @@ window.addEventListener("message", (event) => {
 
 /* ── Conversations ───────────────────────────────────── */
 
-function createConversation() {
+function createConversation({ warmup = true } = {}) {
   const id = `conv-${nextId++}`;
   const feedEl = document.createElement("div");
   feedEl.className = "feed";
@@ -112,12 +117,13 @@ function createConversation() {
   renderEmptyState(conv);
   renderSidebar();
   activate(id);
-  window.clara.warmup(id);
+  if (warmup) window.clara.warmup(id);
   return conv;
 }
 
 function activate(id) {
   activeId = id;
+  activeHome = null;
   for (const [cid, conv] of conversations) {
     conv.feedEl.classList.toggle("active", cid === id);
   }
@@ -227,13 +233,28 @@ function renderGroup(group) {
   const chevron = document.createElement("span");
   chevron.className = "group-chevron" + (group.collapsed ? " collapsed" : "");
   chevron.textContent = "▾";
+  chevron.onclick = (event) => {
+    event.stopPropagation();
+    group.collapsed = !group.collapsed;
+    renderSidebar();
+  };
 
   const name = document.createElement("span");
   name.className = "group-name";
   name.textContent = group.name;
-  name.contentEditable = "true";
   name.spellcheck = false;
-  name.onclick = (event) => event.stopPropagation();
+  const startRename = () => {
+    name.contentEditable = "true";
+    name.focus();
+    document.getSelection()?.selectAllChildren(name);
+  };
+  name.ondblclick = (event) => {
+    event.stopPropagation();
+    startRename();
+  };
+  name.onclick = (event) => {
+    if (name.isContentEditable) event.stopPropagation();
+  };
   name.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -243,13 +264,12 @@ function renderGroup(group) {
   name.addEventListener("blur", () => {
     group.name = name.textContent.trim() || "Grupo";
     name.textContent = group.name;
+    name.contentEditable = "false";
   });
+  group._startRename = startRename;
 
   head.append(chevron, name);
-  head.onclick = () => {
-    group.collapsed = !group.collapsed;
-    renderSidebar();
-  };
+  head.onclick = () => openGroupHome(group.id);
   head.addEventListener("dragover", (event) => {
     event.preventDefault();
     head.classList.add("drop-target");
@@ -289,17 +309,160 @@ itemListEl.addEventListener("drop", (event) => {
   if (convId) moveToGroup(convId, null);
 });
 
-newGroupBtn.onclick = () => {
+function createGroup(name) {
   const id = nextGroupId++;
-  groups.set(id, { id, name: "Grupo", collapsed: false, convIds: [] });
+  const group = {
+    id,
+    name,
+    collapsed: false,
+    convIds: [],
+    summary: null,
+    summaryKey: null,
+  };
+  groups.set(id, group);
+  return group;
+}
+
+newGroupBtn.onclick = () => {
+  const group = createGroup("Grupo");
   renderSidebar();
-  const names = itemListEl.querySelectorAll(".group-name");
-  const last = names[names.length - 1];
-  if (last) {
-    last.focus();
-    document.getSelection()?.selectAllChildren(last);
-  }
+  group._startRename?.();
 };
+
+/* ── Popups → sibling tabs in the origin's group ─────── */
+
+function findConvByWebContentsId(webContentsId) {
+  for (const conv of conversations.values()) {
+    for (const tab of conv.tabs.values()) {
+      if (tab.webContentsId === webContentsId) return { conv, tab };
+    }
+  }
+  return null;
+}
+
+// A link opened "in a new window" becomes a sibling item, grouped with the
+// site it came from (creating the group on first spawn).
+window.clara.onPopup(({ sourceWebContentsId, url, disposition }) => {
+  const origin = findConvByWebContentsId(sourceWebContentsId);
+  if (!origin) return;
+  const originConvId = origin.conv.id;
+
+  let group = groupOf(originConvId);
+  if (!group) {
+    group = createGroup(domainOf(origin.tab.url));
+    group.convIds.push(originConvId);
+  }
+
+  const conv = createConversation({ warmup: false });
+  createTab(conv, url);
+  group.convIds.push(conv.id);
+
+  // Background dispositions (cmd+click) keep the origin focused.
+  if (disposition === "background-tab") activate(originConvId);
+  renderSidebar();
+});
+
+/* ── Group home: thumbnails + Clara's summary ────────── */
+
+function groupTabs(group) {
+  const pairs = [];
+  for (const convId of group.convIds) {
+    const conv = conversations.get(convId);
+    if (!conv) continue;
+    for (const tab of conv.tabs.values()) pairs.push({ conv, tab });
+  }
+  return pairs;
+}
+
+function openGroupHome(groupId) {
+  activeHome = groupId;
+  syncMode();
+  renderGroupHome();
+  refreshGroupSummary(groups.get(groupId));
+}
+
+function renderGroupHome() {
+  const group = activeHome != null ? groups.get(activeHome) : null;
+  if (!group) return;
+
+  homeTitleEl.textContent = group.name;
+  homeSummaryEl.textContent =
+    group.summary ?? "Clara está resumindo este grupo…";
+  homeSummaryEl.classList.toggle("pending", !group.summary);
+
+  homeGridEl.innerHTML = "";
+  const pairs = groupTabs(group);
+  for (const { conv, tab } of pairs) {
+    const card = document.createElement("div");
+    card.className = "home-card";
+
+    const thumb = document.createElement("div");
+    thumb.className = "home-thumb";
+    if (tab.thumb) {
+      const img = document.createElement("img");
+      img.src = tab.thumb;
+      thumb.appendChild(img);
+    }
+
+    const meta = document.createElement("div");
+    meta.className = "home-meta";
+    const title = document.createElement("div");
+    title.className = "home-card-title";
+    title.textContent = tab.title || domainOf(tab.url);
+    const domain = document.createElement("div");
+    domain.className = "home-card-domain";
+    domain.textContent = domainOf(tab.url);
+    meta.append(title, domain);
+
+    card.append(thumb, meta);
+    card.onclick = () => {
+      activate(conv.id);
+      setActiveTab(conv, tab.tabId);
+    };
+    homeGridEl.appendChild(card);
+  }
+  if (!pairs.length) {
+    homeSummaryEl.textContent = "Grupo vazio — arraste itens para cá ou abra links do site.";
+    homeSummaryEl.classList.remove("pending");
+  }
+}
+
+async function refreshGroupSummary(group) {
+  if (!group) return;
+  const pairs = groupTabs(group);
+  if (!pairs.length) return;
+  const key = pairs.map((p) => p.tab.url).sort().join("|");
+  if (group.summaryKey === key && group.summary) return;
+  group.summaryKey = key;
+
+  const pages = [];
+  for (const { tab } of pairs) {
+    let snippet = "";
+    try {
+      const page = await tab.webview.executeJavaScript(ClaraPageScripts.extract(), false);
+      snippet = (page.text ?? "").replace(/\s+/g, " ").slice(0, 400);
+    } catch {
+      /* page unavailable — title and url still inform the summary */
+    }
+    pages.push(`- ${tab.title || "sem título"} (${tab.url}): ${snippet}`);
+  }
+
+  const prompt =
+    `Resuma em 2 ou 3 frases (PT-BR) o grupo de abas "${group.name}": o que ` +
+    `conecta as páginas e para que o usuário parece estar usando o conjunto. ` +
+    `Responda APENAS com texto puro — sem HTML, sem markdown.\n\nPáginas:\n` +
+    pages.join("\n");
+
+  try {
+    const raw = await window.clara.summarize(prompt);
+    const text = raw.replace(/<[^>]+>/g, "").trim();
+    group.summary = text || "(não consegui resumir o grupo)";
+  } catch {
+    group.summary = null;
+    group.summaryKey = null;
+  }
+  if (activeHome === group.id) renderGroupHome();
+}
 
 function renderEmptyState(conv) {
   const empty = document.createElement("div");
@@ -323,9 +486,13 @@ function renderEmptyState(conv) {
 
 function syncMode() {
   const conv = activeConv();
+  if (activeHome != null && !groups.has(activeHome)) activeHome = null;
+  const homeOpen = activeHome != null;
   const siteMode = !!conv && conv.tabs.size > 0;
+  document.body.classList.toggle("home-mode", homeOpen);
   document.body.classList.toggle("site-mode", siteMode);
-  stageEl.hidden = !siteMode;
+  stageEl.hidden = !siteMode && !homeOpen;
+  groupHomeEl.hidden = !homeOpen;
   if (siteMode && !conv.tabs.has(conv.activeTabId)) {
     conv.activeTabId = [...conv.tabs.keys()].pop() ?? null;
   }
@@ -371,6 +538,11 @@ feedsEl.addEventListener(
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
+    if (activeHome != null) {
+      activeHome = null;
+      syncMode();
+      return;
+    }
     const conv = activeConv();
     if (conv) collapseOverlay(conv);
   }
@@ -492,7 +664,16 @@ function createTab(conv, url) {
     collapseOverlay(conv);
   });
 
-  // Archive every settled page (text snapshot) into the browsing history.
+  webview.addEventListener(
+    "dom-ready",
+    () => {
+      tab.webContentsId = webview.getWebContentsId();
+    },
+    { once: true }
+  );
+
+  // Archive every settled page (text snapshot + thumbnail) into the
+  // browsing history / group home.
   let captureTimer = null;
   const capture = () => {
     clearTimeout(captureTimer);
@@ -502,6 +683,18 @@ function createTab(conv, url) {
         window.clara.pageCaptured({ url: page.url, title: page.title, text: page.text });
       } catch {
         /* page not ready or navigated away — next event recaptures */
+      }
+      if (webview.classList.contains("shown")) {
+        try {
+          const image = await webview.capturePage();
+          try {
+            tab.thumb = image.resize({ width: 640 }).toDataURL();
+          } catch {
+            tab.thumb = image.toDataURL();
+          }
+        } catch {
+          /* hidden or mid-navigation — keep the previous thumb */
+        }
       }
     }, 1200);
   };
@@ -532,6 +725,7 @@ function closeTab(conv, tabId) {
     conv.activeTabId = [...conv.tabs.keys()].pop() ?? null;
   }
   syncMode();
+  if (activeHome != null) renderGroupHome();
   window.clara.tabClosed(conv.id, tabId);
 }
 
@@ -544,7 +738,7 @@ function displayedTab() {
 // Webviews must never be reparented or display:none'd (both reload/break the
 // guest), so every webview stays in #stage-views and visibility toggles.
 function renderStage() {
-  const shown = displayedTab();
+  const shown = activeHome != null ? null : displayedTab();
   for (const conv of conversations.values()) {
     for (const tab of conv.tabs.values()) {
       tab.webview.classList.toggle("shown", tab === shown);

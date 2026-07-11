@@ -25,4 +25,12 @@ contextBridge.exposeInMainWorld("clara", {
 
   // Page snapshots for the browsing-history archive.
   pageCaptured: (payload) => ipcRenderer.send("clara:page-captured", payload),
+
+  // Denied window.open/target=_blank popups, redirected into Clara tabs.
+  onPopup: (fn) => {
+    ipcRenderer.on("clara:popup", (_event, payload) => fn(payload));
+  },
+
+  // One-off utility prompt (group-home summaries); resolves with HTML text.
+  summarize: (prompt) => ipcRenderer.invoke("clara:summarize", { prompt }),
 });
