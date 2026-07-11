@@ -26,17 +26,6 @@
 
     <main id="main">
       <div id="stage" hidden>
-        <div class="site-head">
-          <img class="site-favicon" alt="" />
-          <span class="site-title"></span>
-          <span class="site-domain"></span>
-          <span class="site-actions">
-            <button class="site-btn" data-act="back" title="Voltar">&#8592;</button>
-            <button class="site-btn" data-act="fwd" title="Avançar">&#8594;</button>
-            <button class="site-btn" data-act="reload" title="Recarregar">&#8635;</button>
-            <button class="site-btn" data-act="close" title="Fechar aba">&#10005;</button>
-          </span>
-        </div>
         <div id="stage-views"></div>
         <div id="group-home" hidden>
           <div class="home-inner">
@@ -50,6 +39,13 @@
       <div id="composer-wrap">
         <div id="context-chips" hidden></div>
         <div id="composer">
+          <div id="site-controls" hidden>
+            <button class="site-btn" data-act="back" title="Voltar">&#8592;</button>
+            <button class="site-btn" data-act="fwd" title="Avançar">&#8594;</button>
+            <button class="site-btn" data-act="reload" title="Recarregar">&#8635;</button>
+            <button class="site-btn" data-act="close" title="Fechar aba">&#10005;</button>
+            <img id="composer-favicon" alt="" hidden />
+          </div>
           <textarea id="input" rows="1" placeholder="Pergunte qualquer coisa ou digite uma URL…" spellcheck="false"></textarea>
           <button id="send" title="Enviar">
             <svg class="icon-send" viewBox="0 0 16 16" width="14" height="14"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>

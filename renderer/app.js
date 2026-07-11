@@ -13,7 +13,8 @@ const inputEl = document.getElementById("input");
 const sendBtn = document.getElementById("send");
 const stageEl = document.getElementById("stage");
 const stageViewsEl = document.getElementById("stage-views");
-const stageHead = stageEl.querySelector(".site-head");
+const siteControlsEl = document.getElementById("site-controls");
+const composerFaviconEl = document.getElementById("composer-favicon");
 const composerWrapEl = document.getElementById("composer-wrap");
 const groupHomeEl = document.getElementById("group-home");
 const homeTitleEl = groupHomeEl.querySelector(".home-title");
@@ -680,7 +681,7 @@ function domainOf(url) {
 
 function syncTab(conv, tab) {
   renderSidebar();
-  renderStageHead();
+  renderSiteControls();
   window.clara.tabUpdated(conv.id, { tabId: tab.tabId, url: tab.url, title: tab.title });
   session.scheduleSave();
 }
@@ -716,7 +717,7 @@ function createTab(conv, url, { restore = null } = {}) {
   webview.addEventListener("page-favicon-updated", (e) => {
     tab.favicon = e.favicons?.[0] ?? null;
     renderSidebar();
-    renderStageHead();
+    renderSiteControls();
   });
   webview.addEventListener("did-navigate", (e) => {
     tab.url = e.url;
@@ -727,10 +728,16 @@ function createTab(conv, url, { restore = null } = {}) {
     tab.url = e.url;
     syncTab(tab.ownerConv, tab);
   });
-  // Clicking into the site collapses the chat overlay.
-  webview.addEventListener("focus", () => {
-    collapseOverlay(tab.ownerConv);
-  });
+  // Any engagement with the site — hovering over it or clicking into it —
+  // collapses the expanded chat overlay back to the last exchange.
+  const collapseIfExpanded = () => {
+    const owner = tab.ownerConv;
+    if (owner === activeConv() && owner.feedEl.classList.contains("expanded")) {
+      collapseOverlay(owner);
+    }
+  };
+  webview.addEventListener("mouseenter", collapseIfExpanded);
+  webview.addEventListener("focus", collapseIfExpanded);
 
   webview.addEventListener(
     "dom-ready",
@@ -814,30 +821,30 @@ function renderStage() {
       tab.webview.classList.toggle("shown", tab === shown);
     }
   }
-  renderStageHead();
+  renderSiteControls();
 }
 
-function renderStageHead() {
-  const tab = displayedTab();
+// Site controls live inside the composer pill (one floating strip).
+function renderSiteControls() {
+  const tab = activeHome != null ? null : displayedTab();
+  siteControlsEl.hidden = !tab;
   if (!tab) return;
-  stageHead.querySelector(".site-title").textContent = tab.title;
-  stageHead.querySelector(".site-domain").textContent = domainOf(tab.url);
-  const faviconEl = stageHead.querySelector(".site-favicon");
-  if (tab.favicon) faviconEl.src = tab.favicon;
-  else faviconEl.removeAttribute("src");
+  if (tab.favicon) {
+    composerFaviconEl.src = tab.favicon;
+    composerFaviconEl.hidden = false;
+  } else {
+    composerFaviconEl.hidden = true;
+    composerFaviconEl.removeAttribute("src");
+  }
 }
 
-stageHead.querySelector('[data-act="back"]').onclick = () => displayedTab()?.webview.goBack();
-stageHead.querySelector('[data-act="fwd"]').onclick = () => displayedTab()?.webview.goForward();
-stageHead.querySelector('[data-act="reload"]').onclick = () => displayedTab()?.webview.reload();
-stageHead.querySelector('[data-act="close"]').onclick = () => {
+siteControlsEl.querySelector('[data-act="back"]').onclick = () => displayedTab()?.webview.goBack();
+siteControlsEl.querySelector('[data-act="fwd"]').onclick = () => displayedTab()?.webview.goForward();
+siteControlsEl.querySelector('[data-act="reload"]').onclick = () => displayedTab()?.webview.reload();
+siteControlsEl.querySelector('[data-act="close"]').onclick = () => {
   const conv = activeConv();
   if (conv?.activeTabId) closeTab(conv, conv.activeTabId);
 };
-stageHead.addEventListener("mousedown", () => {
-  const conv = activeConv();
-  if (conv) collapseOverlay(conv);
-});
 
 /* ── Tool requests from the agent ────────────────────── */
 
