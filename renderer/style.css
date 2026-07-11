@@ -149,33 +149,36 @@ body {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
-  color: var(--ink-dim);
-  background: var(--btn-fill);
-  border: 1px solid var(--btn-border);
-  border-radius: 8px;
-  padding: 8px 12px;
+  color: var(--ink-muted);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 5px 10px;
   cursor: pointer;
 }
 
-#new-conv:hover { background: var(--btn-fill-hover); }
+#new-conv:hover {
+  background: var(--hover-fill);
+  color: var(--ink-dim);
+}
 
 #new-conv .plus { color: var(--accent); font-weight: 600; }
 
 #new-group {
-  width: 34px;
-  font-size: 13px;
-  color: var(--ink-muted);
-  background: var(--btn-fill);
-  border: 1px solid var(--btn-border);
-  border-radius: 8px;
+  width: 26px;
+  font-size: 11px;
+  color: var(--ink-hint);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
   cursor: pointer;
 }
 
-#new-group:hover { background: var(--btn-fill-hover); color: var(--ink); }
+#new-group:hover { background: var(--hover-fill); color: var(--ink-dim); }
 
 #item-list {
   flex: 1;
@@ -302,18 +305,20 @@ body {
 
 /* ── Stage: the open site owns the main area ─────────── */
 
+/* The site owns every pixel of the main area; all chrome floats above it. */
 #stage {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  padding-top: 38px; /* keep the window drag strip clear of the site header */
+  position: absolute;
+  inset: 0;
   background: var(--bg);
 }
 
 #stage[hidden] { display: none; }
 
-#stage-views { flex: 1; position: relative; background: #fff; }
+#stage-views { position: absolute; inset: 0; background: #fff; }
+
+/* In site mode the window is dragged by the sidebar's top strip only — the
+   site content reaches the window's top edge. */
+body.site-mode #drag-strip { right: auto; width: 264px; }
 
 .site-view {
   position: absolute;
@@ -334,11 +339,29 @@ body.site-mode #feeds {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(var(--composer-h, 72px) + 4px);
+  bottom: calc(var(--composer-h, 60px) + 22px);
   width: min(720px, calc(100% - 56px));
   max-height: 44vh;
   z-index: 30;
   flex: none;
+}
+
+/* Composer (and its caret) floats over the site/home instead of sitting in
+   a solid bottom bar. */
+body.site-mode #composer-wrap,
+body.home-mode #composer-wrap {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 12px;
+  width: min(760px, calc(100% - 56px));
+  padding: 0;
+  z-index: 35;
+}
+
+body.site-mode #composer,
+body.home-mode #composer {
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.28);
 }
 
 body.site-mode .feed {
@@ -460,17 +483,29 @@ body.site-mode .card-error { box-shadow: 0 4px 16px rgba(28, 22, 18, 0.18); }
   border: 0;
 }
 
-/* Stage header (shared look with sidebar chrome) */
+/* Stage chrome: a floating pill over the site (favicon, title, nav) */
 
 .site-head {
+  position: absolute;
+  top: 8px;
+  left: 14px;
+  z-index: 40;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg);
+  max-width: min(64%, 560px);
+  padding: 5px 8px 5px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  backdrop-filter: blur(16px) saturate(1.4);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.14);
   min-width: 0;
+  opacity: 0.92;
+  transition: opacity 0.15s;
 }
+
+.site-head:hover { opacity: 1; }
 
 .site-favicon {
   width: 15px;
@@ -656,15 +691,23 @@ body.site-mode .card-error { box-shadow: 0 4px 16px rgba(28, 22, 18, 0.18); }
 #send.running .icon-stop { display: block; }
 #send.running { background: var(--ink); }
 
-/* Consent bar (first agent interaction on a tab) */
+/* Consent bar (first agent interaction on a tab) — floats below the pill */
 
 .consent-bar {
+  position: absolute;
+  top: 54px;
+  left: 14px;
+  right: 14px;
+  z-index: 45;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px;
-  background: var(--accent-subtle);
-  border-bottom: 1px solid var(--border);
+  padding: 9px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-visible);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
 }
 
 .consent-label {
@@ -705,8 +748,10 @@ body.home-mode #feeds { display: none; }
 body.home-mode #stage .site-head { display: none; }
 
 #group-home {
-  flex: 1;
+  position: absolute;
+  inset: 0;
   overflow-y: auto;
+  padding-top: 38px;
   background: var(--bg);
 }
 
