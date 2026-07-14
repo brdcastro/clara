@@ -64,15 +64,18 @@ renderer/page-scripts.js   JS injected into webviews: extract text+refs, act on 
 
 **Layout model**: a conversation starts as a normal chat feed. Once a tab
 exists, the site takes the whole main area (the stage) and the chat becomes
-a floating overlay above the composer, collapsed to the last user/agent
-exchange. Scrolling over the bubbles expands the history; clicking into the
-site (or Esc, or sending a message) collapses it back.
+an autonomous companion dock above the composer. The latest exchange stays
+visible for a short handoff, then settles into a small **Conversa** control so
+it does not cover the site. Sending or receiving reveals it again; the control
+opens the latest exchange/history, while clicking the site or pressing Esc
+dismisses it.
 
 **Sidebar**: tabs and conversations are deliberately the same thing — one
 item per context. An item with one tab wears that page's favicon/title; with
 several tabs its pages nest under it. Users can create custom groups
-(❐ button, rename via double-click) and drag items into them; dropping on
-the list background ungroups. The sidebar is translucent over macOS vibrancy
+(folder-plus button, rename via double-click) and drag items into them or to
+an exact position; conversations and groups can both be reordered, and
+dropping on the list background ungroups. The sidebar is translucent over macOS vibrancy
 (`vibrancy: "sidebar"` + transparent body, solid `#main`).
 
 **Auto-groups & group home**: target=_blank / window.open popups are denied
@@ -86,7 +89,8 @@ changes. Esc or opening any item leaves the home.
 
 - **Agent**: `@openai/codex-sdk` → spawns bundled `codex exec`. Auth comes from
   `~/.codex/auth.json` (ChatGPT login). Threads persist in `~/.codex/sessions`.
-- **Cards**: agent replies are HTML fragments rendered in sandboxed
+- **Cards**: short agent replies can be Markdown (rendered locally) or simple
+  HTML; substantial replies are HTML pages. Both render in sandboxed
   `iframe[srcdoc]` (`allow-scripts`, no `allow-same-origin`). A wrapper injects
   Cuts design tokens + Google Fonts and reports height via `postMessage`.
 - **Identity**: Cuts (EB Garamond / Inter / JetBrains Mono, warm paper + azure).

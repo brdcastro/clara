@@ -1,9 +1,9 @@
 /* Clara renderer — conversations, floating chat overlay, stage, composer.
    Layout model: with no site open a conversation is a normal feed; once a
    tab exists the site takes the whole main area (the stage) and the chat
-   becomes a floating overlay above the composer, collapsed to the last
-   user/agent exchange. Scrolling over the bubbles expands the history;
-   interacting with the site collapses it again. */
+   becomes an autonomous companion dock above the composer. It keeps the last
+   exchange visible briefly, then settles into a small conversation control;
+   sending/receiving reveals it and deliberate site interaction dismisses it. */
 
 const feedsEl = document.getElementById("feeds");
 const itemListEl = document.getElementById("item-list");
@@ -16,6 +16,9 @@ const stageViewsEl = document.getElementById("stage-views");
 const siteControlsEl = document.getElementById("site-controls");
 const composerFaviconEl = document.getElementById("composer-favicon");
 const composerWrapEl = document.getElementById("composer-wrap");
+const chatToggleEl = document.getElementById("chat-toggle");
+const chatToggleLabelEl = chatToggleEl.querySelector(".chat-toggle-label");
+const chatToggleCountEl = chatToggleEl.querySelector(".chat-toggle-count");
 const groupHomeEl = document.getElementById("group-home");
 const homeTitleEl = groupHomeEl.querySelector(".home-title");
 const homeSummaryEl = groupHomeEl.querySelector(".home-summary");
@@ -31,6 +34,10 @@ let nextId = 1;
 let nextTabId = 1;
 let nextGroupId = 1;
 let activeConsent = null; // { tabId, finish }
+let renderedContextKey = null;
+let modeAnimationTimer = null;
+
+const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 const session = window.ClaraSession({
   conversations,
@@ -105,6 +112,7 @@ const PAGE_MARKER = /^\s*<!--\s*clara:page\s*-->/i;
 
 function isPageAnswer(html) {
   if (PAGE_MARKER.test(html)) return true;
+  if (!window.ClaraFormat.isHtmlFragment(html)) return false;
   return html.length > 1600 || /<table[\s>]|<h1[\s>]/i.test(html);
 }
 
@@ -154,6 +162,8 @@ function createConversation({ warmup = true, restore = null, focus = true } = {}
     activeTabId: restore?.activeTabId ?? null,
     pageFrame: null, // stage iframe for page answers
     showingPage: false,
+    overlayTimer: null,
+    overlayTransitionTimer: null,
   };
   conversations.set(id, conv);
 
@@ -197,18 +207,15 @@ function groupOf(convId) {
   return null;
 }
 
-function moveToGroup(convId, groupId) {
-  const current = groupOf(convId);
-  if (current) current.convIds = current.convIds.filter((id) => id !== convId);
-  if (groupId != null) groups.get(groupId)?.convIds.push(convId);
-  renderSidebar();
-  session.scheduleSave();
-}
-
 function convLabel(conv) {
   const tab = conv.tabs.get(conv.activeTabId) ?? [...conv.tabs.values()][0];
-  if (tab) return { text: tab.title || domainOf(tab.url), favicon: tab.favicon };
-  return { text: conv.title ?? "Nova aba", favicon: null };
+  const pageTitle = tab?.title || (tab ? domainOf(tab.url) : null);
+  const text = conv.title ?? pageTitle ?? "Nova aba";
+  let meta = null;
+  if (conv.tabs.size > 1) meta = `${conv.tabs.size} páginas`;
+  else if (pageTitle && pageTitle !== text) meta = pageTitle;
+  else if (tab && domainOf(tab.url) !== text) meta = domainOf(tab.url);
+  return { text, meta, favicon: tab?.favicon ?? null };
 }
 
 function makeFavicon(src) {
@@ -219,26 +226,143 @@ function makeFavicon(src) {
   return favicon;
 }
 
-function renderConvItem(conv) {
+function dataTransferHas(event, type) {
+  return Array.from(event.dataTransfer?.types ?? []).includes(type);
+}
+
+function reorderMap(map, ids) {
+  const entries = new Map(map);
+  map.clear();
+  for (const id of ids) {
+    const value = entries.get(id);
+    if (value) map.set(id, value);
+  }
+}
+
+function moveConversation(convId, { groupId = null, targetId = null, after = true } = {}) {
+  if (!conversations.has(convId) || convId === targetId) return;
+
+  const current = groupOf(convId);
+  if (current) current.convIds = current.convIds.filter((id) => id !== convId);
+
+  if (groupId != null) {
+    const destination = groups.get(groupId);
+    if (!destination) return;
+    const ids = destination.convIds.filter((id) => id !== convId);
+    const targetIndex = targetId == null ? -1 : ids.indexOf(targetId);
+    const insertAt = targetIndex === -1 ? ids.length : targetIndex + (after ? 1 : 0);
+    ids.splice(insertAt, 0, convId);
+    destination.convIds = ids;
+  } else {
+    const rootIds = [...conversations.keys()].filter(
+      (id) => id !== convId && !groupOf(id)
+    );
+    const targetIndex = targetId == null ? -1 : rootIds.indexOf(targetId);
+    const insertAt = targetIndex === -1 ? rootIds.length : targetIndex + (after ? 1 : 0);
+    rootIds.splice(insertAt, 0, convId);
+
+    const rootSet = new Set(rootIds);
+    const groupedIds = [...conversations.keys()].filter((id) => !rootSet.has(id));
+    reorderMap(conversations, [...rootIds, ...groupedIds]);
+  }
+
+  renderSidebar();
+  session.scheduleSave();
+}
+
+function moveGroup(groupId, targetId, after) {
+  if (!groups.has(groupId) || !groups.has(targetId) || groupId === targetId) return;
+  const ids = [...groups.keys()].filter((id) => id !== groupId);
+  const targetIndex = ids.indexOf(targetId);
+  ids.splice(targetIndex + (after ? 1 : 0), 0, groupId);
+  reorderMap(groups, ids);
+  renderSidebar();
+  session.scheduleSave();
+}
+
+function clearDropMarkers() {
+  for (const el of itemListEl.querySelectorAll(".drop-before, .drop-after, .drop-target")) {
+    el.classList.remove("drop-before", "drop-after", "drop-target");
+  }
+}
+
+function attachConversationDropTarget(item, targetConvId, groupId) {
+  item.addEventListener("dragover", (event) => {
+    if (!dataTransferHas(event, "text/clara-conv")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    clearDropMarkers();
+    const rect = item.getBoundingClientRect();
+    item.classList.add(event.clientY > rect.top + rect.height / 2 ? "drop-after" : "drop-before");
+  });
+  item.addEventListener("dragleave", () => {
+    item.classList.remove("drop-before", "drop-after");
+  });
+  item.addEventListener("drop", (event) => {
+    const convId = event.dataTransfer.getData("text/clara-conv");
+    if (!convId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = item.getBoundingClientRect();
+    moveConversation(convId, {
+      groupId,
+      targetId: targetConvId,
+      after: event.clientY > rect.top + rect.height / 2,
+    });
+  });
+}
+
+function renderConvItem(conv, { groupId = null } = {}) {
   const wrap = document.createElement("div");
   wrap.className = "item-wrap";
+  wrap.dataset.sidebarKey = `conv:${conv.id}`;
 
   const item = document.createElement("div");
   item.className = "conv-item" + (conv.id === activeId ? " active" : "");
   item.draggable = true;
+  item.tabIndex = 0;
+  item.setAttribute("role", "button");
+  if (conv.id === activeId) item.setAttribute("aria-current", "page");
 
-  const { text, favicon } = convLabel(conv);
+  const { text, meta, favicon } = convLabel(conv);
   item.appendChild(makeFavicon(favicon));
+  const copy = document.createElement("span");
+  copy.className = "item-copy";
   const label = document.createElement("span");
   label.className = "item-label";
   label.textContent = text;
-  item.appendChild(label);
+  copy.appendChild(label);
+  if (meta) {
+    const sublabel = document.createElement("span");
+    sublabel.className = "item-meta";
+    sublabel.textContent = meta;
+    copy.appendChild(sublabel);
+  }
+  item.appendChild(copy);
+
+  const grip = document.createElement("span");
+  grip.className = "item-grip";
+  grip.setAttribute("aria-hidden", "true");
+  grip.textContent = "⋮⋮";
+  item.appendChild(grip);
 
   item.onclick = () => activate(conv.id);
+  item.onkeydown = (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      activate(conv.id);
+    }
+  };
   item.addEventListener("dragstart", (event) => {
     event.dataTransfer.setData("text/clara-conv", conv.id);
     event.dataTransfer.effectAllowed = "move";
+    item.classList.add("dragging");
   });
+  item.addEventListener("dragend", () => {
+    item.classList.remove("dragging");
+    clearDropMarkers();
+  });
+  attachConversationDropTarget(item, conv.id, groupId);
   wrap.appendChild(item);
 
   // A single tab IS the item; multiple tabs show as its pages.
@@ -248,6 +372,8 @@ function renderConvItem(conv) {
       sub.className =
         "tab-item" +
         (conv.id === activeId && tab.tabId === conv.activeTabId ? " active" : "");
+      sub.tabIndex = 0;
+      sub.setAttribute("role", "button");
       sub.appendChild(makeFavicon(tab.favicon));
 
       const subLabel = document.createElement("span");
@@ -258,6 +384,7 @@ function renderConvItem(conv) {
       const closeBtn = document.createElement("button");
       closeBtn.className = "tab-close";
       closeBtn.textContent = "✕";
+      closeBtn.setAttribute("aria-label", `Fechar ${tab.title || domainOf(tab.url)}`);
       closeBtn.onclick = (event) => {
         event.stopPropagation();
         closeTab(conv, tab.tabId);
@@ -267,6 +394,13 @@ function renderConvItem(conv) {
       sub.onclick = () => {
         activate(conv.id);
         setActiveTab(conv, tab.tabId);
+      };
+      sub.onkeydown = (event) => {
+        if (event.target !== sub) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          sub.click();
+        }
       };
       wrap.appendChild(sub);
     }
@@ -278,9 +412,13 @@ function renderConvItem(conv) {
 function renderGroup(group) {
   const wrap = document.createElement("div");
   wrap.className = "group-wrap";
+  wrap.dataset.sidebarKey = `group:${group.id}`;
 
   const head = document.createElement("div");
   head.className = "group-head";
+  head.draggable = true;
+  head.tabIndex = 0;
+  head.setAttribute("role", "button");
 
   const chevron = document.createElement("span");
   chevron.className = "group-chevron" + (group.collapsed ? " collapsed" : "");
@@ -293,6 +431,7 @@ function renderGroup(group) {
   };
 
   const name = document.createElement("span");
+  let grip = null;
   name.className = "group-name";
   name.textContent = group.name;
   name.spellcheck = false;
@@ -318,35 +457,90 @@ function renderGroup(group) {
     group.name = name.textContent.trim() || "Grupo";
     name.textContent = group.name;
     name.contentEditable = "false";
+    grip?.setAttribute("aria-label", `Reordenar grupo ${group.name}`);
     session.scheduleSave();
   });
   group._startRename = startRename;
 
-  head.append(chevron, name);
-  head.onclick = () => openGroupHome(group.id);
-  head.addEventListener("dragover", (event) => {
-    event.preventDefault();
-    head.classList.add("drop-target");
+  const count = document.createElement("span");
+  count.className = "group-count";
+  count.textContent = String(group.convIds.length);
+
+  grip = document.createElement("span");
+  grip.className = "group-grip";
+  grip.setAttribute("aria-label", `Reordenar grupo ${group.name}`);
+  grip.textContent = "⋮⋮";
+  grip.onclick = (event) => event.stopPropagation();
+  head.addEventListener("dragstart", (event) => {
+    if (name.isContentEditable) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.setData("text/clara-group", String(group.id));
+    event.dataTransfer.effectAllowed = "move";
+    wrap.classList.add("dragging");
   });
-  head.addEventListener("dragleave", () => head.classList.remove("drop-target"));
+  head.addEventListener("dragend", () => {
+    wrap.classList.remove("dragging");
+    clearDropMarkers();
+  });
+
+  head.append(chevron, name, count, grip);
+  head.onclick = () => openGroupHome(group.id);
+  head.onkeydown = (event) => {
+    if (event.target !== head) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openGroupHome(group.id);
+    }
+  };
+  head.addEventListener("dragover", (event) => {
+    const isConversation = dataTransferHas(event, "text/clara-conv");
+    const isGroup = dataTransferHas(event, "text/clara-group");
+    if (!isConversation && !isGroup) return;
+    event.preventDefault();
+    event.stopPropagation();
+    clearDropMarkers();
+    if (isConversation) {
+      head.classList.add("drop-target");
+    } else {
+      const rect = head.getBoundingClientRect();
+      head.classList.add(event.clientY > rect.top + rect.height / 2 ? "drop-after" : "drop-before");
+    }
+  });
+  head.addEventListener("dragleave", () => {
+    head.classList.remove("drop-target", "drop-before", "drop-after");
+  });
   head.addEventListener("drop", (event) => {
     event.preventDefault();
     event.stopPropagation();
     const convId = event.dataTransfer.getData("text/clara-conv");
-    if (convId) moveToGroup(convId, group.id);
+    const draggedGroupId = Number(event.dataTransfer.getData("text/clara-group"));
+    if (convId) {
+      moveConversation(convId, { groupId: group.id });
+    } else if (draggedGroupId) {
+      const rect = head.getBoundingClientRect();
+      moveGroup(draggedGroupId, group.id, event.clientY > rect.top + rect.height / 2);
+    }
   });
 
   wrap.appendChild(head);
   if (!group.collapsed) {
     for (const convId of group.convIds) {
       const conv = conversations.get(convId);
-      if (conv) wrap.appendChild(renderConvItem(conv));
+      if (conv) wrap.appendChild(renderConvItem(conv, { groupId: group.id }));
     }
   }
   return wrap;
 }
 
 function renderSidebar() {
+  const previousRects = new Map(
+    [...itemListEl.querySelectorAll("[data-sidebar-key]")].map((el) => [
+      el.dataset.sidebarKey,
+      el.getBoundingClientRect(),
+    ])
+  );
   itemListEl.innerHTML = "";
   for (const group of groups.values()) {
     itemListEl.appendChild(renderGroup(group));
@@ -354,13 +548,41 @@ function renderSidebar() {
   for (const [id, conv] of conversations) {
     if (!groupOf(id)) itemListEl.appendChild(renderConvItem(conv));
   }
+
+  if (!prefersReducedMotion.matches && previousRects.size) {
+    requestAnimationFrame(() => {
+      for (const el of itemListEl.querySelectorAll("[data-sidebar-key]")) {
+        const previous = previousRects.get(el.dataset.sidebarKey);
+        if (!previous) continue;
+        const next = el.getBoundingClientRect();
+        const deltaY = previous.top - next.top;
+        if (Math.abs(deltaY) < 1) continue;
+        el.animate(
+          [
+            { transform: `translateY(${deltaY}px)` },
+            { transform: "translateY(0)" },
+          ],
+          { duration: 260, easing: "cubic-bezier(0.22, 1, 0.36, 1)" }
+        );
+      }
+    });
+  }
 }
 
-// Dropping on the list background ungroups the item.
-itemListEl.addEventListener("dragover", (event) => event.preventDefault());
+// Dropping on the list background ungroups the item and places it last.
+itemListEl.addEventListener("dragover", (event) => {
+  if (!dataTransferHas(event, "text/clara-conv")) return;
+  event.preventDefault();
+  clearDropMarkers();
+  itemListEl.classList.add("drop-root");
+});
+itemListEl.addEventListener("dragleave", (event) => {
+  if (!itemListEl.contains(event.relatedTarget)) itemListEl.classList.remove("drop-root");
+});
 itemListEl.addEventListener("drop", (event) => {
   const convId = event.dataTransfer.getData("text/clara-conv");
-  if (convId) moveToGroup(convId, null);
+  itemListEl.classList.remove("drop-root");
+  if (convId) moveConversation(convId);
 });
 
 function createGroup(name, id = nextGroupId++) {
@@ -539,11 +761,31 @@ function renderEmptyState(conv) {
 
 /* ── Mode: feed vs. stage+overlay ────────────────────── */
 
+function contextKey(conv, { homeOpen, siteMode }) {
+  if (homeOpen) return `home:${activeHome}`;
+  if (!siteMode) return `feed:${conv?.id ?? "none"}`;
+  const view = conv.showingPage ? "answer" : conv.activeTabId ?? "stage";
+  return `site:${conv.id}:${view}`;
+}
+
+function animateModeEntry(siteLike) {
+  clearTimeout(modeAnimationTimer);
+  document.body.classList.remove("stage-entering", "feed-entering");
+  if (prefersReducedMotion.matches) return;
+  void document.body.offsetWidth;
+  document.body.classList.add(siteLike ? "stage-entering" : "feed-entering");
+  modeAnimationTimer = setTimeout(() => {
+    document.body.classList.remove("stage-entering", "feed-entering");
+  }, 480);
+}
+
 function syncMode() {
   const conv = activeConv();
   if (activeHome != null && !groups.has(activeHome)) activeHome = null;
   const homeOpen = activeHome != null;
   const siteMode = !!conv && (conv.tabs.size > 0 || conv.showingPage);
+  const nextContextKey = contextKey(conv, { homeOpen, siteMode });
+  const contextChanged = nextContextKey !== renderedContextKey;
   document.body.classList.toggle("home-mode", homeOpen);
   document.body.classList.toggle("site-mode", siteMode);
   stageEl.hidden = !siteMode && !homeOpen;
@@ -556,8 +798,22 @@ function syncMode() {
   updateComposer();
   if (conv) {
     updateLastPair(conv);
-    collapseOverlay(conv);
+    if (siteMode) {
+      if (contextChanged) {
+        if (conv.messages.length || conv.statusEl) {
+          revealOverlay(conv);
+          if (!conv.running) scheduleOverlayMinimize(conv, 3600);
+        } else {
+          collapseOverlay(conv, { minimize: true, immediate: true });
+        }
+      }
+    } else {
+      resetOverlay(conv);
+    }
   }
+  updateChatToggle();
+  if (contextChanged) animateModeEntry(siteMode || homeOpen);
+  renderedContextKey = nextContextKey;
 }
 
 function updateLastPair(conv) {
@@ -569,16 +825,111 @@ function updateLastPair(conv) {
   children.forEach((el, i) => {
     el.classList.toggle("overlay-hidden", lastUserIdx !== -1 && i < lastUserIdx);
   });
+  children
+    .filter((el) => el.classList.contains("overlay-hidden"))
+    .forEach((el, i) => {
+      el.style.setProperty("--history-enter-delay", `${Math.min(i, 5) * 24}ms`);
+      el.style.setProperty("--history-exit-delay", `${Math.min(i, 4) * 10}ms`);
+    });
+}
+
+function clearOverlayTimers(conv) {
+  clearTimeout(conv.overlayTimer);
+  clearTimeout(conv.overlayTransitionTimer);
+  conv.overlayTimer = null;
+  conv.overlayTransitionTimer = null;
+}
+
+function resetOverlay(conv) {
+  clearOverlayTimers(conv);
+  conv.feedEl.classList.remove(
+    "expanded",
+    "minimized",
+    "overlay-entering",
+    "overlay-collapsing"
+  );
+}
+
+function updateChatToggle() {
+  const conv = activeConv();
+  const visible =
+    !!conv &&
+    document.body.classList.contains("site-mode") &&
+    activeHome == null &&
+    (conv.messages.length > 0 || !!conv.statusEl);
+  chatToggleEl.hidden = !visible;
+  if (!visible) return;
+
+  const expanded = conv.feedEl.classList.contains("expanded");
+  const minimized = conv.feedEl.classList.contains("minimized");
+  chatToggleEl.setAttribute("aria-expanded", String(!minimized));
+  chatToggleLabelEl.textContent = expanded
+    ? "Ocultar"
+    : minimized
+      ? "Conversa"
+      : "Ver histórico";
+  chatToggleCountEl.textContent = conv.messages.length ? String(conv.messages.length) : "";
+}
+
+function revealOverlay(conv) {
+  clearOverlayTimers(conv);
+  conv.feedEl.classList.remove("minimized", "expanded", "overlay-collapsing");
+  conv.feedEl.classList.add("overlay-entering");
+  conv.overlayTransitionTimer = setTimeout(() => {
+    conv.feedEl.classList.remove("overlay-entering");
+    conv.overlayTransitionTimer = null;
+  }, 300);
+  scrollToBottom(conv);
+  updateChatToggle();
 }
 
 function expandOverlay(conv) {
-  conv.feedEl.classList.add("expanded");
+  clearOverlayTimers(conv);
+  conv.feedEl.classList.remove("minimized", "overlay-collapsing");
+  conv.feedEl.classList.add("expanded", "overlay-entering");
+  conv.overlayTransitionTimer = setTimeout(() => {
+    conv.feedEl.classList.remove("overlay-entering");
+    conv.overlayTransitionTimer = null;
+  }, 360);
   scrollToBottom(conv);
+  updateChatToggle();
 }
 
-function collapseOverlay(conv) {
-  conv.feedEl.classList.remove("expanded");
-  scrollToBottom(conv);
+function collapseOverlay(conv, { minimize = false, immediate = false } = {}) {
+  clearOverlayTimers(conv);
+  const finish = () => {
+    conv.feedEl.classList.remove("expanded", "overlay-collapsing", "overlay-entering");
+    conv.feedEl.classList.toggle("minimized", minimize);
+    conv.overlayTransitionTimer = null;
+    scrollToBottom(conv);
+    updateChatToggle();
+  };
+
+  if (
+    conv.feedEl.classList.contains("expanded") &&
+    !immediate &&
+    !prefersReducedMotion.matches
+  ) {
+    conv.feedEl.classList.add("overlay-collapsing");
+    conv.overlayTransitionTimer = setTimeout(finish, 170);
+  } else {
+    finish();
+  }
+}
+
+function scheduleOverlayMinimize(conv, delay = 4200) {
+  clearTimeout(conv.overlayTimer);
+  if (
+    conv !== activeConv() ||
+    conv.running ||
+    conv.feedEl.classList.contains("expanded") ||
+    !document.body.classList.contains("site-mode")
+  ) {
+    return;
+  }
+  conv.overlayTimer = setTimeout(() => {
+    collapseOverlay(conv, { minimize: true });
+  }, delay);
 }
 
 // Scrolling over the bubbles expands the chat history.
@@ -600,9 +951,22 @@ document.addEventListener("keydown", (event) => {
       return;
     }
     const conv = activeConv();
-    if (conv) collapseOverlay(conv);
+    if (conv) collapseOverlay(conv, { minimize: true });
   }
 });
+
+chatToggleEl.onclick = () => {
+  const conv = activeConv();
+  if (!conv) return;
+  if (conv.feedEl.classList.contains("minimized")) {
+    revealOverlay(conv);
+    scheduleOverlayMinimize(conv, 5000);
+  } else if (conv.feedEl.classList.contains("expanded")) {
+    collapseOverlay(conv, { minimize: true });
+  } else {
+    expandOverlay(conv);
+  }
+};
 
 /* ── Feed cards ──────────────────────────────────────── */
 
@@ -627,7 +991,7 @@ function renderAiBubble(conv, html) {
   card.className = "card-ai";
   const iframe = document.createElement("iframe");
   iframe.setAttribute("sandbox", "allow-scripts");
-  iframe.srcdoc = wrapCardHtml(stripFences(html));
+  iframe.srcdoc = wrapCardHtml(window.ClaraFormat.bubbleHtml(stripFences(html)));
   card.appendChild(iframe);
   conv.innerEl.appendChild(card);
   updateLastPair(conv);
@@ -686,6 +1050,9 @@ function hidePage(conv) {
 function addUserCard(conv, text) {
   renderUserBubble(conv, text);
   conv.messages.push({ role: "user", text });
+  if (conv === activeConv() && document.body.classList.contains("site-mode")) {
+    revealOverlay(conv);
+  }
   session.scheduleSave();
 }
 
@@ -699,12 +1066,18 @@ function addAiCard(conv, html) {
     renderAiBubble(conv, html);
     conv.messages.push({ role: "ai", html });
   }
+  if (conv === activeConv() && document.body.classList.contains("site-mode")) {
+    revealOverlay(conv);
+  }
   session.scheduleSave();
 }
 
 function addErrorCard(conv, message) {
   renderErrorBubble(conv, message);
   conv.messages.push({ role: "error", text: message });
+  if (conv === activeConv() && document.body.classList.contains("site-mode")) {
+    revealOverlay(conv);
+  }
   session.scheduleSave();
 }
 
@@ -717,12 +1090,30 @@ function setStatus(conv, text) {
     updateLastPair(conv);
   }
   conv.statusEl.querySelector(".label").textContent = text;
+  if (conv === activeConv() && document.body.classList.contains("site-mode")) {
+    revealOverlay(conv);
+  }
   scrollToBottom(conv);
 }
 
 function clearStatus(conv) {
-  conv.statusEl?.remove();
+  const status = conv.statusEl;
   conv.statusEl = null;
+  if (!status) return;
+  const remove = () => {
+    status.remove();
+    updateLastPair(conv);
+    updateChatToggle();
+  };
+  if (prefersReducedMotion.matches) {
+    remove();
+    return;
+  }
+  status.classList.add("bubble-exit");
+  status.addEventListener("animationend", remove, { once: true });
+  setTimeout(() => {
+    if (status.isConnected) remove();
+  }, 220);
 }
 
 /* ── Tabs & stage ────────────────────────────────────── */
@@ -771,6 +1162,7 @@ function createTab(conv, url, { restore = null } = {}) {
     webview,
     interactAllowed: false,
     ownerConv: conv,
+    loading: true,
   };
   conv.tabs.set(tabId, tab);
   conv.activeTabId = tabId;
@@ -794,16 +1186,26 @@ function createTab(conv, url, { restore = null } = {}) {
     tab.url = e.url;
     syncTab(tab.ownerConv, tab);
   });
-  // Any engagement with the site — hovering over it or clicking into it —
-  // collapses the expanded chat overlay back to the last exchange.
-  const collapseIfExpanded = () => {
+  webview.addEventListener("did-start-loading", () => {
+    tab.loading = true;
+    renderStage();
+  });
+  webview.addEventListener("did-stop-loading", () => {
+    tab.loading = false;
+    renderStage();
+    if (tab.ownerConv === activeConv()) scheduleOverlayMinimize(tab.ownerConv, 2400);
+  });
+
+  // Deliberate engagement with the site dismisses the companion dock. Merely
+  // moving the pointer across the page must not change the interface.
+  const dismissOverlay = () => {
     const owner = tab.ownerConv;
-    if (owner === activeConv() && owner.feedEl.classList.contains("expanded")) {
-      collapseOverlay(owner);
+    if (owner === activeConv() && !owner.feedEl.classList.contains("minimized")) {
+      collapseOverlay(owner, { minimize: true });
     }
   };
-  webview.addEventListener("mouseenter", collapseIfExpanded);
-  webview.addEventListener("focus", collapseIfExpanded);
+  webview.addEventListener("mousedown", dismissOverlay);
+  webview.addEventListener("focus", dismissOverlay);
 
   webview.addEventListener(
     "dom-ready",
@@ -894,6 +1296,7 @@ function renderStage() {
       conv.pageFrame.classList.toggle("shown", conv === active && pageOpen);
     }
   }
+  document.body.classList.toggle("site-loading", !!shown?.loading);
   renderSiteControls();
 }
 
@@ -1207,6 +1610,7 @@ window.clara.onEvent(({ conversationId, event }) => {
 
 function setRunning(conv, running) {
   conv.running = running;
+  if (!running && conv === activeConv()) scheduleOverlayMinimize(conv, 4400);
   if (conv.id === activeId) updateComposer();
 }
 
@@ -1216,6 +1620,7 @@ function updateComposer() {
   sendBtn.classList.toggle("running", running);
   sendBtn.title = running ? "Parar" : "Enviar";
   renderContextChips();
+  updateChatToggle();
 }
 
 // Contextual suggestions over an open site (cheap heuristics, no model call).
@@ -1264,7 +1669,6 @@ function sendMessage(text) {
     renderSidebar();
   }
   addUserCard(conv, trimmed);
-  collapseOverlay(conv);
   setRunning(conv, true);
   setStatus(conv, "pensando…");
   window.clara.send(conv.id, trimmed, browserContext(conv));
