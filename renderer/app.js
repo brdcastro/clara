@@ -1148,6 +1148,10 @@ function createTab(conv, url, { restore = null } = {}) {
   const tabId = restore?.tabId ?? `tab-${nextTabId++}`;
   const webview = document.createElement("webview");
   webview.className = "site-view";
+  webview.setAttribute(
+    "preload",
+    new URL("webview-preload.cjs", window.location.href).href
+  );
   webview.setAttribute("src", url);
   webview.dataset.tabId = tabId;
   stageViewsEl.appendChild(webview);
@@ -1196,16 +1200,18 @@ function createTab(conv, url, { restore = null } = {}) {
     if (tab.ownerConv === activeConv()) scheduleOverlayMinimize(tab.ownerConv, 2400);
   });
 
-  // Deliberate engagement with the site dismisses the companion dock. Merely
-  // moving the pointer across the page must not change the interface.
+  // Guest input does not bubble through the host <webview>, so the trusted
+  // guest preload reports deliberate pointer and scroll engagement.
   const dismissOverlay = () => {
     const owner = tab.ownerConv;
     if (owner === activeConv() && !owner.feedEl.classList.contains("minimized")) {
       collapseOverlay(owner, { minimize: true });
     }
   };
-  webview.addEventListener("mousedown", dismissOverlay);
   webview.addEventListener("focus", dismissOverlay);
+  webview.addEventListener("ipc-message", (event) => {
+    if (event.channel === "clara:engaged") dismissOverlay();
+  });
 
   webview.addEventListener(
     "dom-ready",

@@ -122,7 +122,7 @@
   }
 
   function isHtmlFragment(value) {
-    return /^\s*(?:<!--|<[a-z][\s>])/i.test(String(value));
+    return /^\s*(?:<!--|<[a-z][\w:-]*(?:\s|>))/i.test(String(value));
   }
 
   window.ClaraFormat = {

@@ -18,6 +18,11 @@ test("format: preserves intentional HTML fragments", () => {
   assert.equal(format.bubbleHtml(html), html);
 });
 
+test("format: recognizes multi-character HTML tags", () => {
+  const html = '<section class="answer"><h2>Resposta rica</h2></section>';
+  assert.equal(format.bubbleHtml(html), html);
+});
+
 test("format: preserves escaped query strings in safe Markdown links", () => {
   const html = format.bubbleHtml("[buscar](https://example.com/?a=1&b=2)");
   assert.match(html, /href="https:\/\/example\.com\/\?a=1&amp;b=2"/);
