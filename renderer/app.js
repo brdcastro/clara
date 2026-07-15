@@ -104,27 +104,23 @@ function stripFences(text) {
   return match ? match[1] : text;
 }
 
-/* Substantial answers become a full page on the stage (the site stays in
-   the tab behind, like navigating away in the same tab). The model marks
-   them with <!--clara:page-->; a heuristic promotes unmarked big answers. */
-
-const PAGE_MARKER = /^\s*<!--\s*clara:page\s*-->/i;
-
-function isPageAnswer(html) {
-  if (PAGE_MARKER.test(html)) return true;
-  if (!window.ClaraFormat.isHtmlFragment(html)) return false;
-  return html.length > 1600 || /<table[\s>]|<h1[\s>]/i.test(html);
-}
+/* Every answer chooses a surface: compact/page-context replies stay in the
+   conversation; substantial answers take the stage while preserving the
+   current site behind them. The model marks the choice and a content-based
+   fallback keeps older/unmarked replies predictable. */
 
 function wrapPageHtml(html) {
   const PAGE_STYLE =
     CARD_STYLE +
     `
     html, body { background: var(--bg); }
-    body { padding: 52px 44px 150px; }
-    .clara-page-col { max-width: 800px; margin: 0 auto; }
-    h1 { font-size: 32px; } h2 { font-size: 23px; } h3 { font-size: 18px; }
-    body { font-size: 15px; }
+    body { padding: clamp(54px, 7vw, 96px) clamp(32px, 7vw, 92px) 160px; }
+    .clara-page-col { width: 100%; max-width: 1120px; margin: 0 auto; }
+    h1 { max-width: 18ch; font-size: clamp(38px, 5vw, 58px); line-height: 1.02;
+      letter-spacing: -.035em; text-wrap: balance; margin-bottom: .65em; }
+    h2 { font-size: 27px; margin-top: 1.8em; } h3 { font-size: 19px; margin-top: 1.4em; }
+    p, ul, ol, blockquote { max-width: 72ch; }
+    body { font-size: 16px; line-height: 1.65; }
   `;
   return `<!doctype html><html><head><meta charset="utf-8">${FONTS_LINK}<style>${PAGE_STYLE}</style></head><body><div class="clara-page-col">${html}</div></body></html>`;
 }
@@ -784,10 +780,12 @@ function syncMode() {
   if (activeHome != null && !groups.has(activeHome)) activeHome = null;
   const homeOpen = activeHome != null;
   const siteMode = !!conv && (conv.tabs.size > 0 || conv.showingPage);
+  const answerMode = !homeOpen && !!conv?.showingPage;
   const nextContextKey = contextKey(conv, { homeOpen, siteMode });
   const contextChanged = nextContextKey !== renderedContextKey;
   document.body.classList.toggle("home-mode", homeOpen);
   document.body.classList.toggle("site-mode", siteMode);
+  document.body.classList.toggle("answer-mode", answerMode);
   stageEl.hidden = !siteMode && !homeOpen;
   groupHomeEl.hidden = !homeOpen;
   if (siteMode && !conv.tabs.has(conv.activeTabId)) {
@@ -798,7 +796,9 @@ function syncMode() {
   updateComposer();
   if (conv) {
     updateLastPair(conv);
-    if (siteMode) {
+    if (answerMode) {
+      if (contextChanged) collapseOverlay(conv, { minimize: true, immediate: true });
+    } else if (siteMode) {
       if (contextChanged) {
         if (conv.messages.length || conv.statusEl) {
           revealOverlay(conv);
@@ -1008,6 +1008,13 @@ function renderErrorBubble(conv, message) {
 }
 
 function replayMessage(conv, msg) {
+  if (
+    msg.role === "ai" &&
+    !msg.page &&
+    window.ClaraFormat.answerPresentation(stripFences(msg.html ?? "")) === "page"
+  ) {
+    msg.page = true;
+  }
   conv.messages.push(msg);
   if (msg.role === "user") renderUserBubble(conv, msg.text);
   else if (msg.role === "ai" && msg.page) renderPageStub(conv, msg.html);
@@ -1019,9 +1026,10 @@ function replayMessage(conv, msg) {
 // history stays navigable.
 function renderPageStub(conv, html) {
   conv.innerEl.querySelector(".empty-state")?.remove();
-  const stub = document.createElement("div");
+  const stub = document.createElement("button");
+  stub.type = "button";
   stub.className = "page-stub";
-  stub.innerHTML = '<span class="page-stub-icon">▤</span><span>Resposta aberta como página — clique para reabrir</span>';
+  stub.innerHTML = '<span class="page-stub-icon">▤</span><span>Resposta em tela cheia — reabrir</span>';
   stub.onclick = () => showPage(conv, html);
   conv.innerEl.appendChild(stub);
   updateLastPair(conv);
@@ -1036,7 +1044,9 @@ function showPage(conv, html) {
     stageViewsEl.appendChild(frame);
     conv.pageFrame = frame;
   }
-  conv.pageFrame.srcdoc = wrapPageHtml(stripFences(html).replace(PAGE_MARKER, ""));
+  conv.pageFrame.srcdoc = wrapPageHtml(
+    window.ClaraFormat.answerHtml(stripFences(html))
+  );
   conv.showingPage = true;
   syncMode();
 }
@@ -1058,7 +1068,8 @@ function addUserCard(conv, text) {
 
 function addAiCard(conv, html) {
   const clean = stripFences(html);
-  if (isPageAnswer(clean)) {
+  const pageAnswer = window.ClaraFormat.answerPresentation(clean) === "page";
+  if (pageAnswer) {
     renderPageStub(conv, html);
     showPage(conv, html);
     conv.messages.push({ role: "ai", html, page: true });
@@ -1067,7 +1078,8 @@ function addAiCard(conv, html) {
     conv.messages.push({ role: "ai", html });
   }
   if (conv === activeConv() && document.body.classList.contains("site-mode")) {
-    revealOverlay(conv);
+    if (pageAnswer) collapseOverlay(conv, { minimize: true, immediate: true });
+    else revealOverlay(conv);
   }
   session.scheduleSave();
 }
@@ -1634,7 +1646,8 @@ const contextChipsEl = document.getElementById("context-chips");
 
 function renderContextChips() {
   const conv = activeConv();
-  const siteOpen = !!conv && conv.tabs.size > 0 && activeHome == null;
+  const siteOpen =
+    !!conv && conv.tabs.size > 0 && activeHome == null && !conv.showingPage;
   const show = siteOpen && !conv.running;
   contextChipsEl.hidden = !show;
   if (!show) return;

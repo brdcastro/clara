@@ -1122,17 +1122,19 @@ body.home-mode #feeds { display: none; }
   background: var(--bg);
   visibility: hidden;
   opacity: 0;
+  pointer-events: none;
+  z-index: 2;
+  transform: translateY(10px) scale(0.997);
+  transition: opacity 0.2s ease-out, transform 0.3s var(--ease-out-expo),
+    visibility 0s linear 0.3s;
 }
 
 .page-view.shown {
   visibility: visible;
   opacity: 1;
-  animation: page-in 0.34s cubic-bezier(0.32, 0, 0.18, 1);
-}
-
-@keyframes page-in {
-  from { opacity: 0; transform: translateY(14px); }
-  to { opacity: 1; transform: none; }
+  pointer-events: auto;
+  transform: none;
+  transition-delay: 0s;
 }
 
 .page-stub {
@@ -1140,6 +1142,7 @@ body.home-mode #feeds { display: none; }
   align-items: center;
   gap: 9px;
   align-self: flex-start;
+  appearance: none;
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.04em;
@@ -1153,6 +1156,7 @@ body.home-mode #feeds { display: none; }
 }
 
 .page-stub:hover { border-color: var(--accent); color: var(--accent); }
+.page-stub:active { transform: translateY(1px) scale(0.99); }
 
 .page-stub-icon { color: var(--accent); font-size: 13px; }
 

@@ -23,6 +23,22 @@ test("format: recognizes multi-character HTML tags", () => {
   assert.equal(format.bubbleHtml(html), html);
 });
 
+test("format: honors explicit bubble and page presentation markers", () => {
+  assert.equal(format.answerPresentation("<!--clara:bubble-->\n# Curta"), "bubble");
+  assert.equal(
+    format.answerPresentation(`<!--clara:bubble-->\n${"contexto ".repeat(180)}`),
+    "bubble"
+  );
+  assert.equal(format.answerPresentation("<!--clara:page-->\n<p>Breve</p>"), "page");
+  assert.equal(format.answerHtml("<!--clara:bubble-->\n**Pronto.**"), "<p><strong>Pronto.</strong></p>");
+});
+
+test("format: promotes substantial unmarked answers to a page", () => {
+  assert.equal(format.answerPresentation("# Guia\n\n## Um\n\n## Dois"), "page");
+  assert.equal(format.answerPresentation("<h1>Guia</h1><p>Curto.</p>"), "page");
+  assert.equal(format.answerPresentation("Resposta curta e direta."), "bubble");
+});
+
 test("format: preserves escaped query strings in safe Markdown links", () => {
   const html = format.bubbleHtml("[buscar](https://example.com/?a=1&b=2)");
   assert.match(html, /href="https:\/\/example\.com\/\?a=1&amp;b=2"/);

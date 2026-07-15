@@ -2,6 +2,8 @@
    Rich/page answers remain authored as HTML and run in the existing sandbox. */
 
 (function exposeClaraFormat() {
+  const PRESENTATION_MARKER = /^\s*<!--\s*clara:(page|bubble)\s*-->\s*/i;
+
   function escapeHtml(value) {
     return String(value)
       .replaceAll("&", "&amp;")
@@ -125,9 +127,47 @@
     return /^\s*(?:<!--|<[a-z][\w:-]*(?:\s|>))/i.test(String(value));
   }
 
+  function stripPresentationMarker(value) {
+    return String(value).replace(PRESENTATION_MARKER, "");
+  }
+
+  function answerPresentation(value) {
+    const source = String(value);
+    const directive = source.match(PRESENTATION_MARKER)?.[1]?.toLowerCase();
+    if (directive) return directive;
+
+    const body = stripPresentationMarker(source);
+    const rich = isHtmlFragment(body);
+    const visible = rich
+      ? body.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+          .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+      : body.trim();
+    const sections = rich
+      ? (body.match(/<h[1-3]\b/gi) ?? []).length
+      : (body.match(/^#{1,3}\s+/gm) ?? []).length;
+    const structured = rich
+      ? /<(?:h1|table|dl|figure)\b/i.test(body)
+      : /^#\s+|^\|.+\|\s*$/m.test(body);
+
+    return visible.length > 900 || body.length > 1500 || sections >= 3 || structured
+      ? "page"
+      : "bubble";
+  }
+
+  function answerHtml(value) {
+    const body = stripPresentationMarker(value);
+    return isHtmlFragment(body) ? body : markdownToHtml(body);
+  }
+
   window.ClaraFormat = {
-    bubbleHtml: (value) => (isHtmlFragment(value) ? String(value) : markdownToHtml(value)),
+    answerHtml,
+    answerPresentation,
+    bubbleHtml: answerHtml,
     isHtmlFragment,
     markdownToHtml,
+    stripPresentationMarker,
   };
 })();

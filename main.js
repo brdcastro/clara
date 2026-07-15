@@ -123,25 +123,37 @@ app.on("web-contents-created", (_event, contents) => {
   });
 });
 
-// Prefixes the user's message with the live browser state so references like
-// "esta página" resolve without a list_tabs round-trip.
+const PRESENTATION_CONTEXT = `[Clara presentation — injected by the app.
+Start the response with exactly one first-line marker: <!--clara:bubble--> or <!--clara:page-->.
+Use bubble only for a brief answer or concise commentary directly about the active page.
+Use page when the answer is substantial, needs sections/data/visual explanation, or changes subject away from the active page.
+After opening or operating a website, use a brief bubble confirmation instead of duplicating the site.
+The marker is UI metadata and must not be explained to the user.]`;
+
+// Prefixes the user's message with live app state. Browser context resolves
+// references like "esta página"; presentation context makes the surface choice
+// reliable even on resumed agent threads created under an older contract.
 function withBrowserContext(text, context) {
-  if (!context?.tabs?.length) return text;
-  const lines = ["[Browser context — injected by the app, not written by the user."];
-  if (context.activeTab) {
-    lines.push(
-      `Active tab (${context.activeTab.tabId}): "${context.activeTab.title}" <${context.activeTab.url}>`
-    );
+  const blocks = [];
+  if (context?.tabs?.length) {
+    const lines = ["[Browser context — injected by the app, not written by the user."];
+    if (context.activeTab) {
+      lines.push(
+        `Active tab (${context.activeTab.tabId}): "${context.activeTab.title}" <${context.activeTab.url}>`
+      );
+    }
+    const others = context.tabs.filter((t) => t.tabId !== context.activeTab?.tabId);
+    if (others.length) {
+      lines.push(
+        "Other tabs: " +
+          others.map((t) => `(${t.tabId}) "${t.title}" <${t.url}>`).join("; ")
+      );
+    }
+    lines.push("]");
+    blocks.push(lines.join("\n"));
   }
-  const others = context.tabs.filter((t) => t.tabId !== context.activeTab?.tabId);
-  if (others.length) {
-    lines.push(
-      "Other tabs: " +
-        others.map((t) => `(${t.tabId}) "${t.title}" <${t.url}>`).join("; ")
-    );
-  }
-  lines.push("]");
-  return `${lines.join("\n")}\n\n${text}`;
+  blocks.push(PRESENTATION_CONTEXT, text);
+  return blocks.join("\n\n");
 }
 
 // Unique path in ~/Downloads: "file.pdf" -> "file (1).pdf" when taken.
